@@ -57,6 +57,9 @@
     }
     var type = u.searchParams.get("type") || "facets";
     if (!TYPES.some(function (t) { return t.id === type; })) type = "facets";
+    var rawItem = u.searchParams.get("item") || "";
+    var item = migrateItemId(rawItem);
+    if (item !== rawItem && type === "teaching") type = "concrete";
     var group = u.searchParams.get("group");
     if (group !== "none" && group !== "company" && group !== "principle") group = "principle";
     var view = u.searchParams.get("view") === "drill" ? "drill" : "list";
@@ -67,7 +70,7 @@
       q: u.searchParams.get("q") || "",
       group: group,
       view: view,
-      item: u.searchParams.get("item") || "",
+      item: item,
       oc: u.searchParams.get("oc") || "",
       op: u.searchParams.get("op") || "",
       dryrun: u.searchParams.get("dryrun") === "1",
@@ -1311,6 +1314,8 @@
     if (!toggle || !panel || !save) return;
     var active = document.activeElement;
     var keepId = active && panel.contains(active) && active.id ? active.id : "";
+    var previousHoney = root.querySelector("[name=website]");
+    var honeyValue = previousHoney ? previousHoney.value : "";
     var list = pendingList();
     var saveable = saveableList();
     var over = batchError(saveable);
@@ -1358,6 +1363,7 @@
     note.value = S.note;
     metaBox.appendChild(note);
     var honey = el("input", { class: "ed-honeypot", name: "website", tabindex: "-1", autocomplete: "off", "aria-hidden": "true" });
+    honey.value = honeyValue;
     metaBox.appendChild(honey);
     panel.appendChild(metaBox);
 
