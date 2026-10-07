@@ -184,6 +184,31 @@ test("a teaching link must resolve and be listed in related", () => {
   }, slugs, true)[0], /missing from related/);
 });
 
+test("a company name of __proto__ still groups the pull request text", () => {
+  const body = plan.pullBody([{
+    repo: "principles",
+    file: "data/amazon/ownership.json",
+    path: ["rows", { id: "one" }, "under"],
+    before: "A.",
+    after: "B.",
+    label: "Ownership",
+    field: "Under",
+    company: "__proto__",
+    companyName: "__proto__",
+    principleName: "constructor",
+  }], "", "");
+  assert.match(body, /## __proto__/);
+  assert.match(body, /### constructor/);
+  assert.match(body, /Ownership, field Under/);
+});
+
+test("an unclosed principle link is rejected", () => {
+  assert.match(rules.checkText("See {lp:ownership", { tokens: true })[0], /Principle links/);
+  assert.match(rules.checkText("See {lp:ownership} and {lp:bias", { tokens: true, slugs: ["ownership"] })[0], /Principle links/);
+  assert.equal(rules.checkText("See {lp:ownership}.", { tokens: true, slugs: ["ownership"] }).length, 0);
+  assert.match(rules.teachingLinks({ why: ["See {lp:ownership"], related: [] }, ["ownership"], true)[0], /Principle links/);
+});
+
 test("em dashes, triple hyphens, and en dashes are rejected", () => {
   assert.ok(rules.checkText("Wait \u2014 then go.", {}).some((e) => /em dash/.test(e)));
   assert.ok(rules.checkText("Wait --- then go.", {}).some((e) => /---/.test(e)));

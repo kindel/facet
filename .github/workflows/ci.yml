@@ -21,4 +21,4 @@ jobs:
         run: node --check js/facet.js && node --check lib/allow.js && node --check lib/patch.js && node --check lib/plan.js && node --check lib/rules.js && node --check lib/guard.js
 
       - name: Run the patch and allowlist tests
-        run: node --test tests/patch.test.mjs tests/allow.test.mjs
+        run: node --test tests/patch.test.mjs tests/allow.test.mjs tests/guard.test.mjs

@@ -17,7 +17,7 @@
     { id: "all", label: "All" },
   ];
   var SENTENCE = /(?<=[.!?])["')\]]*\s+/;
-  var LP_ANY = /\{lp:[^}]*\}/g;
+  var LP_OK = /^\{lp:[a-z0-9]+(?:-[a-z0-9]+)*\}$/;
   var PENDING_KEY = "kld-editor-pending-v1";
   var RECENT_KEY = "kld-editor-recent-v1";
   var MAX_CHANGES = 200;
@@ -138,9 +138,17 @@
     if (spec.questionMark && !/\?\s*$/.test(text.trim())) errors.push("End this question with ?");
     if (spec.url && !/^https?:\/\/\S+$/.test(text.trim())) errors.push("Use an http or https URL.");
     if (spec.tokens) {
-      var any = text.match(LP_ANY) || [];
-      for (var i = 0; i < any.length; i++) {
-        if (!/^\{lp:[a-z0-9]+(?:-[a-z0-9]+)*\}$/.test(any[i])) errors.push("Principle links look like {lp:ownership}.");
+      var linkAt = 0;
+      while (linkAt < text.length) {
+        var open = text.indexOf("{lp:", linkAt);
+        if (open === -1) break;
+        var close = text.indexOf("}", open);
+        var token = close === -1 ? text.slice(open) : text.slice(open, close + 1);
+        if (!LP_OK.test(token)) {
+          errors.push("Principle links look like {lp:ownership}.");
+          break;
+        }
+        linkAt = close + 1;
       }
       if (spec.slugs) {
         var seen = {};
@@ -443,18 +451,64 @@
     }
   }
 
+  function valueAt(node, path) {
+    var cur = node;
+    for (var i = 0; i < path.length; i++) {
+      var step = path[i];
+      if (cur == null) return undefined;
+      if (typeof step === "string" || typeof step === "number") {
+        cur = cur[step];
+        continue;
+      }
+      if (!step || typeof step !== "object" || !Array.isArray(cur)) return undefined;
+      var keys = Object.keys(step);
+      var found = null;
+      for (var n = 0; n < cur.length; n++) {
+        var ok = cur[n] && typeof cur[n] === "object";
+        for (var k = 0; ok && k < keys.length; k++) {
+          if (cur[n][keys[k]] !== step[keys[k]]) ok = false;
+        }
+        if (ok) {
+          found = cur[n];
+          break;
+        }
+      }
+      if (!found) return undefined;
+      cur = found;
+    }
+    return cur;
+  }
+
   function applyLocal(change) {
+    var file = S.files[change.repo + ":" + change.file];
+    if (!file || !Array.isArray(change.path)) return;
+    var from = JSON.stringify(change.before);
+    var to = JSON.stringify(change.after);
+    var positions = [];
+    var at = 0;
+    while (at <= file.text.length) {
+      var found = file.text.indexOf(from, at);
+      if (found === -1) break;
+      positions.push(found);
+      at = found + from.length;
+    }
+    var chosen = -1;
+    var nextText = "";
+    for (var i = 0; i < positions.length; i++) {
+      var trial = file.text.slice(0, positions[i]) + to + file.text.slice(positions[i] + from.length);
+      var parsed;
+      try { parsed = JSON.parse(trial); } catch (err) { continue; }
+      if (valueAt(parsed, change.path) !== change.after) continue;
+      if (chosen !== -1) return;
+      chosen = i;
+      nextText = trial;
+    }
+    if (chosen === -1) return;
+    file.text = nextText;
+    file.json = JSON.parse(nextText);
     var item = itemById(change.itemId);
     var field = item ? fieldByPath(item, change.path) : null;
     if (field) field.value = change.after;
-    var file = S.files[change.repo + ":" + change.file];
-    if (!file) return;
-    var from = JSON.stringify(change.before);
-    var to = JSON.stringify(change.after);
-    var at = file.text.indexOf(from);
-    if (at === -1 || file.text.indexOf(from, at + from.length) !== -1) return;
-    file.text = file.text.slice(0, at) + to + file.text.slice(at + from.length);
-    try { file.json = JSON.parse(file.text); } catch (err) {}
     gitBlobSha(file.text).then(function (sha) { file.sha = sha; }).catch(function () {});
   }
 
@@ -564,6 +618,7 @@
       });
       (facet.rows || []).forEach(function (row, rowIndex) {
         if (!row || !row.situation || !row.id) return;
+        if (row.words !== "generated") return;
         var item = baseItem({
           id: "facet:" + facet.id + ":" + row.id,
           type: "facets",
@@ -1087,7 +1142,7 @@
         pane.appendChild(quiet);
       }
       if (field.tokens && item.company) {
-        var picker = el("select", { class: "ed-select ed-insert", "data-insert": String(index) });
+        var picker = el("select", { class: "ed-select ed-insert", "data-insert": String(index), "aria-label": "Insert a principle link in " + field.label });
         picker.appendChild(el("option", { value: "" }, "Insert a principle link"));
         slugsFor(item.company).forEach(function (slug) {
           var co = S.companies.filter(function (c) { return c.id === item.company; })[0];
@@ -1197,10 +1252,10 @@
     if (over) pane.appendChild(el("p", { class: "ed-field-error" }, over));
 
     var meta = el("div", { class: "ed-meta" });
-    var name = el("input", { class: "ed-input", id: "ed-name", spellcheck: "true", lang: "en", placeholder: "Your name, optional", autocomplete: "name" });
+    var name = el("input", { class: "ed-input", id: "ed-name", spellcheck: "true", lang: "en", placeholder: "Your name, optional", "aria-label": "Your name, optional", autocomplete: "name" });
     name.value = S.name;
     meta.appendChild(name);
-    var note = el("textarea", { class: "ed-area", id: "ed-note", spellcheck: "true", lang: "en", rows: "2", placeholder: "Note for the pull request, optional" });
+    var note = el("textarea", { class: "ed-area", id: "ed-note", spellcheck: "true", lang: "en", rows: "2", placeholder: "Note for the pull request, optional", "aria-label": "Note for the pull request, optional" });
     note.value = S.note;
     meta.appendChild(note);
     var honey = el("input", { class: "ed-honeypot", name: "website", tabindex: "-1", autocomplete: "off" });
