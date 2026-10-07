@@ -26,7 +26,7 @@ Facet is the editor. It lists facets, BIQ questions, concrete questions, teachin
 
 The save function stays on the host, because that is where the token lives. `lib/` is the allowlist, the patch, the abuse caps, and the reuse helper. The host runs that code on the server. The browser is not the authority. Do not edit the host's copy of those files. Edit them here.
 
-`lib/reuse.js` repeats a teaching edit on every reused copy that still has the same text. The derivation maps in the principles data name those copies. A field that already differs stays with the map.
+`lib/reuse.js` repeats a teaching edit on every reused copy that still has the same text. The derivation maps in the principles data name those copies. A slug rename is rewritten into each copy, so a renamed principle slug is not treated as a content change. Another field in that file can still differ. Editing the field that already differs is refused, because saving one side would fail the principles validator. That difference stays on the map.
 
 `card.json` is status beta and unlisted. Do not drop unlisted to put the app on the catalog grid unless Tig says so.
 
