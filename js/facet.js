@@ -26,6 +26,15 @@
   var MAX_FILES = 80;
   var RECENT_MAX = 8;
 
+  function essayHref(href) {
+    var api = typeof window !== "undefined" ? window.kindelEssayLinks : null;
+    var cat = typeof window !== "undefined" ? window.KINDEL_ESSAY_CATALOG : null;
+    if (!api || !cat || typeof api.rewriteHref !== "function") return href;
+    var next = api.rewriteHref(href, cat);
+    if (typeof next === "string" && next.indexOf("/essays/") === 0) return "https://kindel.com" + next;
+    return next;
+  }
+
   var S = {
     files: {},
     companies: [],
@@ -952,7 +961,7 @@
       });
     }
     html = html.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, function (_, label, url) {
-      return '<a href="' + url + '" rel="noopener noreferrer">' + label + "</a>";
+      return '<a href="' + essayHref(url) + '" rel="noopener noreferrer">' + label + "</a>";
     });
     return html.replace(/\n/g, "<br>");
   }
@@ -1164,7 +1173,7 @@
       input.setAttribute("aria-invalid", errors.length ? "true" : "false");
       pane.appendChild(warn);
       if (field.url) {
-        var link = el("a", { href: /^https?:\/\//.test(value) ? value : "https://kindel.com/", rel: "noopener noreferrer", "data-preview": String(index) }, value || "Link preview");
+        var link = el("a", { href: /^https?:\/\//.test(value) ? essayHref(value) : "https://kindel.com/", rel: "noopener noreferrer", "data-preview": String(index) }, value || "Link preview");
         var preview = el("p", { class: "ed-preview" });
         preview.appendChild(link);
         pane.appendChild(preview);
@@ -1547,7 +1556,7 @@
     if (preview) {
       if (field.url) {
         preview.textContent = after || "Link preview";
-        if (preview.tagName === "A") preview.setAttribute("href", /^https?:\/\//.test(after) ? after : "https://kindel.com/");
+        if (preview.tagName === "A") preview.setAttribute("href", /^https?:\/\//.test(after) ? essayHref(after) : "https://kindel.com/");
       } else {
         var show = !!field.tokens || /\{lp:|\[[^\]\n]+\]\(https?:\/\//.test(after);
         preview.hidden = !show;
