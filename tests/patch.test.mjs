@@ -238,6 +238,18 @@ test("deepen questions must end with a question mark", () => {
   );
   assert.equal(bad.ok, false);
   assert.match(bad.errors[0].error, /\?/);
+  const good = plan.prepare(
+    { "principles:data/teaching/amazon/ownership.json": teaching },
+    [{
+      repo: "principles",
+      file: "data/teaching/amazon/ownership.json",
+      path: ["deepen", 0],
+      before: "Who owns the outcome?",
+      after: "Who owns the outcome now?",
+    }]
+  );
+  assert.equal(good.ok, true);
+  assert.match(good.files[0].after, /Who owns the outcome now\?/);
 });
 
 function onlyThoseTokens(before, after, pairs) {
