@@ -1,0 +1,29 @@
+{{ define "title" }}{{ .Title }} | {{ .Site.Title }}{{ end }}
+
+{{ define "head" }}
+<meta name="robots" content="noindex, nofollow">
+{{ partial "head-additions.html" . }}
+{{ end }}
+
+{{ define "header" }}
+  {{- $card := index .Site.Data.tools "facet" -}}
+  {{ partial "app-kit/hero.html" (dict "page" . "card" $card) }}
+{{ end }}
+
+{{ define "main" }}
+<link rel="stylesheet" href="{{ "css/facet.css" | relURL }}">
+<article class="kld-topics-page tool-page editor-host">
+  {{ with index .Site.Data.tools "facet" }}
+    {{ partial "app-kit/frame-start.html" (dict "card" . "page" $) }}
+  {{ end }}
+  <div id="kld-editor"></div>
+  {{ partial "app-kit/frame-end.html" . }}
+</article>
+<script>
+  (function () {
+    var icon = document.querySelector(".editor-host .app-frame-icon");
+    if (icon) icon.alt = "Facet";
+  })();
+</script>
+<script src="{{ "js/facet.js" | relURL }}" defer></script>
+{{ end }}
