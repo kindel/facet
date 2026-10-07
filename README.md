@@ -1,6 +1,6 @@
 # Facet
 
-Browse every facet and every interview question, edit the text, and open a pull request.
+Browse every facet, every BIQ question, and the questions that make a principle concrete. Edit the text, and open a pull request.
 
 ## App card
 
@@ -14,7 +14,7 @@ The page layout is `layouts/page/facet.html`. The host content file sets `layout
 
 `lib/` is the patch, the allowlist, and the abuse caps (`allow.js`, `patch.js`, `plan.js`, `rules.js`, `guard.js`). The host's save function runs these files on the server. It does not trust the browser.
 
-Principle text stays in [kindel/principles](https://github.com/kindel/principles). Question text stays in [kindel/biq](https://github.com/kindel/biq). This repo does not copy those sets.
+Principle text stays in [kindel/principles](https://github.com/kindel/principles). BIQ question text stays in [kindel/biq](https://github.com/kindel/biq). Questions that make a principle concrete are the `deepen` list in a teaching file. This repo does not copy those sets.
 
 ## Run
 

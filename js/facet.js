@@ -1,7 +1,8 @@
 /* Facet. Hosted at /kld/apps/facet/ on kindel.com. The save function name stays editor-save.
    Facet rows and record rows: kindel/principles data/facets.json and data/<company>/<slug>.json.
    Teaching and further reading: data/teaching/<company>/.
-   Questions: kindel/biq data/questions.json, text only. Ids stay put. */
+   BIQ questions: kindel/biq data/questions.json, text only. Ids stay put.
+   Concrete questions: the deepen list in data/teaching/<company>/<slug>.json. */
 (function () {
   "use strict";
 
@@ -11,7 +12,8 @@
   };
   var TYPES = [
     { id: "facets", label: "Facets" },
-    { id: "questions", label: "Questions" },
+    { id: "questions", label: "BIQ Questions" },
+    { id: "concrete", label: "Concrete questions" },
     { id: "teaching", label: "Teaching" },
     { id: "reading", label: "Reading" },
     { id: "all", label: "All" },
@@ -41,6 +43,7 @@
     narrow: false,
     restored: 0,
     restoredStale: 0,
+    pendingOpen: false,
   };
 
   var root = document.getElementById("kld-editor");
@@ -54,8 +57,8 @@
     }
     var type = u.searchParams.get("type") || "facets";
     if (!TYPES.some(function (t) { return t.id === type; })) type = "facets";
-    var group = u.searchParams.get("group") || "none";
-    if (group !== "principle" && group !== "company") group = "none";
+    var group = u.searchParams.get("group");
+    if (group !== "none" && group !== "company" && group !== "principle") group = "principle";
     var view = u.searchParams.get("view") === "drill" ? "drill" : "list";
     return {
       type: type,
@@ -82,7 +85,7 @@
     set("c", f.companies.join(","));
     set("p", f.principles.join(","));
     set("q", f.q);
-    set("group", f.group === "none" ? "" : f.group);
+    set("group", f.group === "principle" ? "" : f.group);
     set("view", f.view === "drill" ? "drill" : "");
     set("item", f.item);
     set("oc", f.view === "drill" ? f.oc : "");
@@ -735,7 +738,7 @@
             kind: "question",
             title: q.text,
             text: q.text,
-            kicker: q.manager ? "Manager question" : "Question",
+            kicker: q.manager ? "BIQ manager question" : "BIQ question",
             tags: tags,
             shared: extra.length > 0,
             note: extra.length ? "Stored on " + co.name + ", " + pr.name + ". Other principles show it through a shared facet. The question id stays put, so example packs keep their link." : "The question id stays put, so example packs keep their link.",
@@ -745,7 +748,7 @@
             file: "data/questions.json",
             order: qi,
           });
-          addField(item, "text", "Question", ["companies", { id: co.id }, "principles", { id: pr.id }, "questions", step, "text"], q.text, { multiline: true });
+          addField(item, "text", "BIQ question", ["companies", { id: co.id }, "principles", { id: pr.id }, "questions", step, "text"], q.text, { multiline: true });
           items.push(item);
         });
       });
@@ -805,8 +808,21 @@
         }
         (body.deepen || []).forEach(function (q, i) {
           var holder = { fields: [] };
-          addField(holder, "deepen", "Deepen", ["deepen", i], q, { multiline: true, tokens: true, questionMark: true });
-          teach("deepen-" + i, "Deepen", q, holder.fields, 50 + i);
+          addField(holder, "deepen", "Concrete question", ["deepen", i], q, { multiline: true, tokens: true, questionMark: true });
+          items.push(baseItem({
+            id: "concrete:" + co.id + ":" + entry.id + ":" + i,
+            type: "concrete",
+            kind: "concrete",
+            title: q,
+            text: q,
+            kicker: "Concrete question",
+            tags: tag ? [tag] : [],
+            company: co.id,
+            repo: "principles",
+            file: file,
+            order: i,
+            fields: holder.fields,
+          }));
         });
         (body.related || []).forEach(function (rel, i) {
           var holder = { fields: [] };
@@ -945,6 +961,7 @@
   function listLabel(item) {
     var key = "";
     if (item.kind === "question") key = "text";
+    else if (item.kind === "concrete") key = "deepen";
     else if (item.kind === "facet" || item.kind === "row") key = "situation";
     else if (item.kind === "reading") key = "title";
     if (key) {
@@ -1217,63 +1234,130 @@
     parent.appendChild(box);
   }
 
+  function focusables(node) {
+    if (!node || node.hidden) return [];
+    return Array.prototype.filter.call(
+      node.querySelectorAll("button, a[href], input, select, textarea"),
+      function (item) {
+        return !item.disabled && item.tabIndex >= 0 && !item.closest("[hidden]");
+      }
+    );
+  }
+
+  function pendingButtonText(shown) {
+    return shown + " pending " + (S.pendingOpen ? "\u25B4" : "\u25BE");
+  }
+
+  function setPendingOpen(open, focusMode) {
+    S.pendingOpen = !!open;
+    renderPending();
+    var panel = document.getElementById("ed-pending-panel");
+    var toggle = document.getElementById("ed-pending-toggle");
+    if (S.pendingOpen && focusMode === "inside" && panel) {
+      var items = focusables(panel);
+      if (items.length) items[0].focus();
+    }
+    if (!S.pendingOpen && focusMode === "toggle" && toggle) toggle.focus();
+  }
+
+  function renderToolbar() {
+    var bar = el("div", { class: "ed-toolbar", id: "ed-toolbar" });
+    var wrap = el("div", { class: "ed-pending-wrap", id: "ed-pending-wrap" });
+    wrap.appendChild(el("button", {
+      type: "button",
+      class: "ed-pending-toggle",
+      id: "ed-pending-toggle",
+      "aria-expanded": "false",
+      "aria-controls": "ed-pending-panel",
+      "aria-haspopup": "dialog",
+    }, pendingButtonText(0)));
+    var panel = el("div", {
+      id: "ed-pending-panel",
+      class: "ed-pending-panel",
+      role: "dialog",
+      "aria-modal": "true",
+      "aria-labelledby": "ed-pending-title",
+    });
+    panel.hidden = true;
+    wrap.appendChild(panel);
+    bar.appendChild(wrap);
+    var save = el("button", { class: "ed-save", type: "button", id: "ed-save" }, "Save");
+    save.disabled = true;
+    bar.appendChild(save);
+    return bar;
+  }
+
   function renderPending() {
-    var pane = document.getElementById("ed-pending");
-    if (!pane) return;
-    clear(pane);
-    pane.appendChild(el("h2", { class: "ed-text" }, "Pending changes"));
+    var toggle = document.getElementById("ed-pending-toggle");
+    var panel = document.getElementById("ed-pending-panel");
+    var save = document.getElementById("ed-save");
+    var wrap = document.getElementById("ed-pending-wrap");
+    if (!toggle || !panel || !save) return;
+    var active = document.activeElement;
+    var keepId = active && panel.contains(active) && active.id ? active.id : "";
     var list = pendingList();
     var saveable = saveableList();
     var over = batchError(saveable);
+    var n = list.filter(function (change) { return !change.stale; }).length;
+    toggle.textContent = pendingButtonText(list.length);
+    toggle.setAttribute("aria-label", list.length + " pending");
+    toggle.setAttribute("aria-expanded", S.pendingOpen ? "true" : "false");
+    if (wrap) wrap.classList.toggle("is-open", S.pendingOpen);
+    panel.hidden = !S.pendingOpen;
+    clear(panel);
+    panel.appendChild(el("h2", { class: "ed-text", id: "ed-pending-title" }, "Pending changes"));
     if (list.length) {
-      pane.appendChild(el("button", { class: "ed-discard", type: "button", id: "ed-discard" }, "Discard all"));
+      panel.appendChild(el("button", { class: "ed-discard", type: "button", id: "ed-discard" }, "Discard all"));
     }
-    var wrap = el("div", { class: "ed-pending-list" });
-    if (!list.length) wrap.appendChild(el("p", { class: "ed-empty" }, "No pending changes."));
+    var changes = el("div", { class: "ed-pending-list" });
+    if (!list.length) changes.appendChild(el("p", { class: "ed-empty" }, "No pending changes."));
     list.forEach(function (change) {
       var row = el("div", { class: "ed-change" + (change.stale ? " is-stale" : "") });
-      var copy = el("div", {});
-      copy.appendChild(el("strong", {}, change.label));
+      var jump = el("button", { type: "button", class: "ed-jump", "data-jump": change.itemId });
+      jump.appendChild(el("strong", {}, change.label));
       var where = change.companyName || "";
       if (change.principleName) where = where ? where + ", " + change.principleName : change.principleName;
       if (change.shared) where = where ? "Shared, " + where : "Shared";
-      copy.appendChild(el("span", { class: "ed-kicker" }, (where ? where + " · " : "") + change.field));
+      var meta = (where ? where + " · " : "") + change.field;
+      jump.appendChild(el("span", { class: "ed-kicker" }, meta));
+      if (change.stale) jump.appendChild(el("span", { class: "ed-flag" }, "Stale"));
       var errors = changeErrors(change);
-      if (errors.length) copy.appendChild(el("span", { class: "ed-field-error" }, " " + errors[0]));
-      row.appendChild(copy);
+      if (errors.length) jump.appendChild(el("span", { class: "ed-field-error" }, errors[0]));
+      row.appendChild(jump);
       row.appendChild(el("button", { type: "button", "data-undo": change.id }, "Undo"));
-      wrap.appendChild(row);
+      changes.appendChild(row);
     });
-    pane.appendChild(wrap);
+    panel.appendChild(changes);
     var staleN = list.filter(function (change) { return change.stale; }).length;
     if (staleN) {
-      pane.appendChild(el("p", { class: "ed-banner" }, "Stale edits stay in the list and are not part of this save."));
+      panel.appendChild(el("p", { class: "ed-banner" }, "Stale edits stay in the list and are not part of this save."));
     }
-    if (over) pane.appendChild(el("p", { class: "ed-field-error" }, over));
+    if (over) panel.appendChild(el("p", { class: "ed-field-error" }, over));
 
-    var meta = el("div", { class: "ed-meta" });
+    var metaBox = el("div", { class: "ed-meta" });
     var name = el("input", { class: "ed-input", id: "ed-name", spellcheck: "true", lang: "en", placeholder: "Your name, optional", "aria-label": "Your name, optional", autocomplete: "name" });
     name.value = S.name;
-    meta.appendChild(name);
+    metaBox.appendChild(name);
     var note = el("textarea", { class: "ed-area", id: "ed-note", spellcheck: "true", lang: "en", rows: "2", placeholder: "Note for the pull request, optional", "aria-label": "Note for the pull request, optional" });
     note.value = S.note;
-    meta.appendChild(note);
-    var honey = el("input", { class: "ed-honeypot", name: "website", tabindex: "-1", autocomplete: "off" });
-    meta.appendChild(honey);
-    pane.appendChild(meta);
+    metaBox.appendChild(note);
+    var honey = el("input", { class: "ed-honeypot", name: "website", tabindex: "-1", autocomplete: "off", "aria-hidden": "true" });
+    metaBox.appendChild(honey);
+    panel.appendChild(metaBox);
 
-    var bar = el("div", { class: "ed-savebar", id: "ed-savebar" });
     var check = el("label", { class: "ed-check" });
     var box = el("input", { type: "checkbox", id: "ed-dry" });
     box.checked = S.filters.dryrun;
     check.appendChild(box);
     check.appendChild(document.createTextNode(" Dry run"));
-    bar.appendChild(check);
-    var n = list.filter(function (change) { return !change.stale; }).length;
-    var save = el("button", { class: "ed-save", type: "button", id: "ed-save" }, (S.filters.dryrun ? "Preview pull request" : "Save") + (n ? " (" + n + ")" : ""));
+    panel.appendChild(check);
+
+    save.textContent = (S.filters.dryrun ? "Preview pull request" : "Save") + (n ? " (" + n + ")" : "");
     save.disabled = S.saving || !saveable.length || hasErrors() || !!over;
-    bar.appendChild(save);
-    pane.appendChild(bar);
+    if (keepId && S.pendingOpen) {
+      var again = document.getElementById(keepId);
+      if (again) again.focus();
+    }
   }
 
   function refreshRecent() {
@@ -1301,6 +1385,7 @@
   function renderShell() {
     clear(root);
     var app = el("div", { class: "ed-app", id: "ed-app" });
+    app.appendChild(renderToolbar());
     var filters = el("div", { class: "ed-filters" });
     var types = el("div", { class: "ed-types", role: "group", "aria-label": "Content type" });
     TYPES.forEach(function (type) {
@@ -1324,7 +1409,7 @@
     filters.appendChild(filterMenu("principle", "Principles", principles));
 
     var group = el("select", { class: "ed-select", id: "ed-group", "aria-label": "Group" });
-    [["none", "No grouping"], ["principle", "Group by principle"], ["company", "Group by company"]].forEach(function (pair) {
+    [["principle", "Group by principle"], ["company", "Group by company"], ["none", "No grouping"]].forEach(function (pair) {
       var opt = el("option", { value: pair[0] }, pair[1]);
       if (S.filters.group === pair[0]) opt.selected = true;
       group.appendChild(opt);
@@ -1341,7 +1426,6 @@
     var panes = el("div", { class: "ed-panes" });
     panes.appendChild(el("section", { class: "ed-list-pane", id: "ed-list", "aria-label": "Content" }));
     panes.appendChild(el("section", { class: "ed-editor-pane", id: "ed-editor", "aria-label": "Editor" }));
-    panes.appendChild(el("section", { class: "ed-pending-pane", id: "ed-pending", "aria-label": "Pending changes" }));
     app.appendChild(panes);
     root.appendChild(app);
     applyNarrow();
@@ -1375,11 +1459,28 @@
   }
 
   function paint() {
+    writeFilters(false);
     renderShell();
     renderList();
     renderEditor();
     renderPending();
     applyNarrow();
+  }
+
+  function openItem(id, push) {
+    var item = itemById(id);
+    if (!item) return;
+    if (S.filters.type !== "all" && item.type !== S.filters.type) S.filters.type = item.type;
+    S.filters.item = item.id;
+    S.result = null;
+    writeFilters(!!push);
+    if (S.pendingOpen) S.pendingOpen = false;
+    renderList();
+    renderEditor();
+    renderPending();
+    syncTypeButtons();
+    applyNarrow();
+    if (S.narrow) window.scrollTo(0, 0);
   }
 
   function onField(input) {
@@ -1539,6 +1640,11 @@
   }
 
   root.addEventListener("click", function (event) {
+    if (event.target.closest("#ed-pending-toggle")) {
+      var opening = !S.pendingOpen;
+      setPendingOpen(opening, opening ? "inside" : "toggle");
+      return;
+    }
     var type = event.target.closest("[data-type]");
     if (type) {
       S.filters.type = type.getAttribute("data-type");
@@ -1574,13 +1680,7 @@
     }
     var itemBtn = event.target.closest("[data-item]");
     if (itemBtn) {
-      S.filters.item = itemBtn.getAttribute("data-item");
-      S.result = null;
-      writeFilters(true);
-      renderList();
-      renderEditor();
-      applyNarrow();
-      if (S.narrow) window.scrollTo(0, 0);
+      openItem(itemBtn.getAttribute("data-item"), true);
       return;
     }
     if (event.target.id === "ed-back") {
@@ -1600,6 +1700,15 @@
       renderEditor();
       renderPending();
       renderList();
+      if (S.pendingOpen) {
+        var afterUndo = focusables(document.getElementById("ed-pending-panel"));
+        if (afterUndo.length) afterUndo[0].focus();
+      }
+      return;
+    }
+    var jump = event.target.closest("[data-jump]");
+    if (jump) {
+      openItem(jump.getAttribute("data-jump"), true);
       return;
     }
     if (event.target.id === "ed-discard") {
@@ -1614,6 +1723,10 @@
       renderEditor();
       renderPending();
       renderList();
+      if (S.pendingOpen) {
+        var afterDiscard = focusables(document.getElementById("ed-pending-panel"));
+        if (afterDiscard.length) afterDiscard[0].focus();
+      }
       return;
     }
     if (event.target.id === "ed-save") save();
@@ -1639,7 +1752,9 @@
 
   root.addEventListener("change", function (event) {
     if (event.target.id === "ed-group") {
-      S.filters.group = event.target.value;
+      var group = event.target.value;
+      if (group !== "none" && group !== "company" && group !== "principle") group = "principle";
+      S.filters.group = group;
       writeFilters(false);
       renderList();
       return;
@@ -1676,8 +1791,46 @@
     }
   });
 
+  root.addEventListener("keydown", function (event) {
+    if (!S.pendingOpen) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setPendingOpen(false, "toggle");
+      return;
+    }
+    if (event.key !== "Tab") return;
+    var panel = document.getElementById("ed-pending-panel");
+    var items = focusables(panel);
+    if (!items.length) {
+      event.preventDefault();
+      return;
+    }
+    var first = items[0];
+    var last = items[items.length - 1];
+    var active = document.activeElement;
+    if (event.shiftKey) {
+      if (active === first || !panel.contains(active)) {
+        event.preventDefault();
+        last.focus();
+      }
+    } else if (active === last || !panel.contains(active)) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+
+  document.addEventListener("mousedown", function (event) {
+    if (!S.pendingOpen) return;
+    var panel = document.getElementById("ed-pending-panel");
+    var toggle = document.getElementById("ed-pending-toggle");
+    if (panel && panel.contains(event.target)) return;
+    if (toggle && (toggle === event.target || toggle.contains(event.target))) return;
+    setPendingOpen(false);
+  });
+
   window.addEventListener("popstate", function () {
     S.filters = readFilters();
+    S.pendingOpen = false;
     paint();
   });
   window.addEventListener("resize", applyNarrow);

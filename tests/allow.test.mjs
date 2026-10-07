@@ -49,6 +49,30 @@ test("allowlist accepts facet text, record rows, questions, and further reading"
   })).ok, true);
 });
 
+test("allowlist accepts a concrete question on deepen and rejects the neighbors", () => {
+  const ok = allow.assess(change({
+    file: "data/teaching/generic/ownership.json",
+    path: ["deepen", 0],
+    before: "Did you write the handoff down?",
+    after: "Did you write the handoff down before you left?",
+  }));
+  assert.equal(ok.ok, true);
+  assert.equal(ok.spec.kind, "teaching");
+  assert.equal(ok.spec.field, "deepen");
+  assert.equal(ok.spec.questionMark, true);
+  assert.equal(ok.spec.tokens, true);
+  const rejected = [
+    change({ file: "data/teaching/generic/ownership.json", path: ["deepen"] }),
+    change({ file: "data/teaching/generic/ownership.json", path: ["deepen", 0, "text"] }),
+    change({ file: "data/teaching/generic/ownership.json", path: ["deepen", "0"] }),
+    change({ file: "data/teaching/generic/index.json", path: ["deepen", 0] }),
+    change({ file: "data/teaching/amazon/index.json", path: ["deepen", 1] }),
+  ];
+  rejected.forEach((item) => {
+    assert.equal(allow.assess(item).ok, false, JSON.stringify(item.file) + " " + JSON.stringify(item.path));
+  });
+});
+
 test("allowlist rejects new files, traversal, and fields the schema does not edit", () => {
   const rejected = [
     change({ file: "data/index.json", path: ["version"] }),
