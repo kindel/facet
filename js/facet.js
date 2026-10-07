@@ -370,6 +370,13 @@
     storageSet(RECENT_KEY, JSON.stringify(next.concat(prev).slice(0, RECENT_MAX)));
   }
 
+  // Concrete questions used to live on the Teaching tab as teach:<company>:<principle>:deepen-<index>.
+  function migrateItemId(id) {
+    var match = /^teach:([^:]+):([^:]+):deepen-(\d+)$/.exec(String(id || ""));
+    if (!match) return id || "";
+    return "concrete:" + match[1] + ":" + match[2] + ":" + match[3];
+  }
+
   function restorePending() {
     var raw = storageGet(PENDING_KEY);
     if (!raw) return;
@@ -383,6 +390,7 @@
     var ids = Object.keys(data.edits);
     var n = 0;
     var staleN = 0;
+    var migrated = false;
     for (var i = 0; i < ids.length && n < MAX_CHANGES; i++) {
       var saved = data.edits[ids[i]];
       if (!saved || typeof saved !== "object") continue;
@@ -390,7 +398,13 @@
       if (saved.path.length < 1 || saved.path.length > 8) continue;
       if (typeof saved.before !== "string" || typeof saved.after !== "string") continue;
       if (saved.before.length > 16000 || saved.after.length > 16000) continue;
-      var item = itemById(saved.itemId);
+      var itemId = migrateItemId(saved.itemId);
+      var item = itemById(itemId);
+      if (!item) {
+        item = itemById(saved.itemId);
+        itemId = saved.itemId;
+      }
+      var moved = !!(item && saved.itemId !== item.id);
       var field = item ? fieldByPath(item, saved.path) : null;
       var current = field ? field.value : null;
       // The file SHA records which version this edit was made against.
@@ -400,11 +414,12 @@
       var id = item && field ? changeId(item, field) : String(saved.id || ids[i]);
       if (!id || S.pending[id]) continue;
       if (stale) staleN++;
+      if (moved) migrated = true;
       S.pending[id] = {
         id: id,
-        itemId: saved.itemId,
-        label: saved.label || (item ? item.title : "Edit"),
-        field: saved.field || (field ? field.label : "Field"),
+        itemId: item ? item.id : saved.itemId,
+        label: moved ? item.title : (saved.label || (item ? item.title : "Edit")),
+        field: moved && field ? field.label : (saved.field || (field ? field.label : "Field")),
         repo: saved.repo,
         file: saved.file,
         path: saved.path,
@@ -424,6 +439,7 @@
       S.restored = n;
       S.restoredStale = staleN;
     }
+    if (migrated) persistPending();
   }
 
   async function gitBlobSha(text) {
