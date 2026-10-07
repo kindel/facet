@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check the page script and the patch library
+        run: node --check js/facet.js && node --check lib/allow.js && node --check lib/patch.js && node --check lib/plan.js && node --check lib/rules.js && node --check lib/guard.js
+
+      - name: Run the patch and allowlist tests
+        run: node --test tests/patch.test.mjs tests/allow.test.mjs tests/guard.test.mjs

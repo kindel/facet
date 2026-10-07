@@ -1,0 +1,9 @@
+{
+  "id": "facet",
+  "name": "Facet",
+  "href": "/kld/apps/facet/",
+  "status": "beta",
+  "unlisted": true,
+  "icon": "icon.png",
+  "summary": "Edit a facet or a question, then open a pull request."
+}
