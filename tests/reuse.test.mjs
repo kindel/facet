@@ -211,6 +211,64 @@ test("a reused list edit is refused when any sibling entry already differs", () 
   assert.equal(translated.changes[1].value, "New?");
 });
 
+test("a later caller copy is applied before the next edit of that list", () => {
+  const first = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/amazon/invent-and-simplify.json",
+    path: ["deepen"],
+    index: 0,
+    seq: 1,
+    value: "First?",
+    company: "amazon",
+  };
+  const second = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/amazon/invent-and-simplify.json",
+    path: ["deepen"],
+    index: 1,
+    seq: 2,
+    value: "Second?",
+    company: "amazon",
+  };
+  const generic = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/invent-and-simplify.json",
+    path: ["deepen"],
+    index: 0,
+    seq: 3,
+    value: "First?",
+    company: "generic",
+  };
+  const result = reuse.expand([first, second, generic], index, maps, filesFor(BEFORE));
+  assert.equal(result.ok, true, result.error);
+  const genericEdits = result.changes.filter((one) => one.file.indexOf("/generic/") !== -1);
+  assert.equal(genericEdits.length, 2);
+  assert.equal(genericEdits[0], generic);
+  assert.equal(genericEdits[0].value, "First?");
+  assert.equal(genericEdits[1].value, "Second?");
+  assert.equal(genericEdits[1].index, 1);
+  assert.ok(result.changes.indexOf(generic) < result.changes.indexOf(second));
+  assert.ok(result.changes.indexOf(generic) < result.changes.indexOf(genericEdits[1]));
+  const diverged = {
+    "principles:data/teaching/amazon/invent-and-simplify.json": JSON.stringify({
+      id: 1003,
+      slug: "invent-and-simplify",
+      deepen: ["A", "B", "C"],
+    }),
+    "principles:data/teaching/generic/invent-and-simplify.json": JSON.stringify({
+      id: 8006,
+      slug: "invent-and-simplify",
+      deepen: ["A", "DIFFERENT", "C"],
+    }),
+  };
+  const refused = reuse.expand([first, second, generic], index, maps, diverged);
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /already differs/);
+});
+
 test("a reused list that already differs is refused", () => {
   const result = reuse.expand([Object.assign({}, edit, {
     op: "remove",
