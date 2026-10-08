@@ -220,6 +220,13 @@ test("an essay permalink has to use the kindel essays path", () => {
     note: "A note.",
   }, { item: "blog" });
   assert.match(byId.join("\n"), /essays\/the-5-ps-achieving-focus-in-any-endeavor/);
+  const dated = "https://blog.kindel.com/2020/01/02/";
+  ["constructor", "toString", "hasOwnProperty"].forEach((name) => {
+    assert.equal(rules.essayUrlError(dated + name + "/"), "", name);
+    assert.equal(rules.essayUrlError(dated + name + "/", { tenets: "tenets" }), "", "caller " + name);
+  });
+  assert.match(rules.essayUrlError(dated + "tenets/"), /essays\/tenets/);
+  assert.match(rules.essayUrlError(dated + "constructor/", { constructor: "constructor" }), /essays\/constructor/);
 });
 
 test("an existing essay permalink does not block a new reading link", () => {
@@ -530,6 +537,139 @@ test("a new facet row has to be a complete calibration row", () => {
     rows: [{ id: "thin-row", words: "generated", under: "Too little." }],
   }, { item: "facet" });
   assert.match(bad.join("\n"), /situation/);
+});
+
+function facetDoc(rows) {
+  return {
+    version: 1,
+    facets: [{
+      id: "ownership",
+      label: "ownership",
+      principles: [1002],
+      rows: rows,
+    }],
+  };
+}
+
+const generatedRow = {
+  id: "the-work",
+  situation: "The work",
+  under: "Does less.",
+  justRight: "Does the job.",
+  over: "Does every job.",
+  words: "generated",
+};
+
+function sourceFiles(facets) {
+  return {
+    "principles:data/facets.json": JSON.stringify(facets),
+    "principles:data/index.json": JSON.stringify({
+      companies: [{
+        id: "amazon",
+        principles: [
+          { id: 1002, slug: "ownership", file: "data/amazon/ownership.json" },
+          { id: 1001, slug: "customer-obsession", file: "data/amazon/customer-obsession.json" },
+        ],
+      }],
+    }),
+    "principles:data/amazon/ownership.json": JSON.stringify({
+      id: 1002,
+      rows: [{ id: "knowing-what-you-own" }],
+    }),
+    "principles:data/amazon/customer-obsession.json": JSON.stringify({
+      id: 1001,
+      rows: [{ id: "knowing-what-you-own" }],
+    }),
+  };
+}
+
+test("a source ref has to name a row on a principle this facet lists", () => {
+  const files = sourceFiles(facetDoc([generatedRow]));
+  function insert(value) {
+    return plan.prepare(files, [{
+      op: "insert",
+      repo: "principles",
+      file: "data/facets.json",
+      path: ["facets", { id: "ownership" }, "rows"],
+      index: 0,
+      value: value,
+    }]);
+  }
+  const missingPrinciple = insert({ principle: 9999, id: "missing-row" });
+  assert.equal(missingPrinciple.ok, false);
+  assert.match(missingPrinciple.errors[0].error, /does not list/);
+  const missingRow = insert({ principle: 1002, id: "missing-row" });
+  assert.equal(missingRow.ok, false);
+  assert.match(missingRow.errors[0].error, /does not match a row/);
+  const unlisted = insert({ principle: 1001, id: "knowing-what-you-own" });
+  assert.equal(unlisted.ok, false);
+  assert.match(unlisted.errors[0].error, /does not list/);
+  const unloaded = plan.prepare({
+    "principles:data/facets.json": files["principles:data/facets.json"],
+  }, [{
+    op: "insert",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets", { id: "ownership" }, "rows"],
+    index: 0,
+    value: { principle: 1002, id: "knowing-what-you-own" },
+  }]);
+  assert.equal(unloaded.ok, false);
+  assert.match(unloaded.errors[0].error, /not loaded/);
+  const added = insert({ principle: 1002, id: "knowing-what-you-own" });
+  assert.equal(added.ok, true, JSON.stringify(added.errors));
+  const present = facetDoc([{ principle: 1002, id: "knowing-what-you-own" }, generatedRow]);
+  const moved = plan.prepare(sourceFiles(present), [{
+    op: "move",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets", { id: "ownership" }, "rows"],
+    index: 0,
+    to: 1,
+    before: { principle: 1002, id: "knowing-what-you-own" },
+  }]);
+  assert.equal(moved.ok, true, JSON.stringify(moved.errors));
+  const stale = facetDoc([{ principle: 1002, id: "missing-row" }, generatedRow]);
+  const movedMissing = plan.prepare(sourceFiles(stale), [{
+    op: "move",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets", { id: "ownership" }, "rows"],
+    index: 0,
+    to: 1,
+    before: { principle: 1002, id: "missing-row" },
+  }]);
+  assert.equal(movedMissing.ok, false);
+  assert.match(movedMissing.errors[0].error, /does not match a row/);
+});
+
+test("a save cannot produce two facets with the same id", () => {
+  const before = facetDoc([generatedRow]);
+  const duplicate = plan.prepare({
+    "principles:data/facets.json": JSON.stringify(before),
+  }, [{
+    op: "insert",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets"],
+    index: 1,
+    value: {
+      id: "ownership",
+      label: "ownership",
+      principles: [1002],
+      rows: [generatedRow],
+    },
+  }]);
+  assert.equal(duplicate.ok, false);
+  assert.match(duplicate.errors[0].error, /Facet id ownership is already used/);
+  const distinct = JSON.parse(JSON.stringify(before));
+  distinct.facets.push({
+    id: "customer-obsession",
+    label: "customer obsession",
+    principles: [1001],
+    rows: [generatedRow],
+  });
+  assert.equal(rules.structuralShape(distinct, "data/facets.json").length, 0);
 });
 
 const records = { ownership: 8002, "earn-trust": 8003, "deliver-results": 8004 };

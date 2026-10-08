@@ -399,9 +399,21 @@
     var needQuestions = false;
     var needFacets = false;
     var teachingFiles = [];
+    function addSourceRecords(value) {
+      if (!value || typeof value !== "object") return;
+      var rows = Array.isArray(value.rows) ? value.rows : [value];
+      rows.forEach(function (row) {
+        if (!row || typeof row.principle !== "number" || row.situation) return;
+        var meta = S.byId && S.byId[row.principle];
+        if (meta && typeof meta.file === "string") add("principles:" + meta.file);
+      });
+    }
     (changes || []).forEach(function (change) {
       if (!change || !change.repo || !change.file) return;
       if (change.op !== "create") add(change.repo + ":" + change.file);
+      if (change.file === "data/facets.json" && (change.op === "insert" || change.op === "move")) {
+        addSourceRecords(change.op === "move" ? change.before : change.value);
+      }
       var facetChange = change.file === "data/facets.json" || change.listKind === "facet" || (Array.isArray(change.path) && change.path[change.path.length - 1] === "facets");
       var teachingChange = change.repo === "principles" && change.file.indexOf("data/teaching/") === 0;
       if (teachingChange) teachingFiles.push(change.file);
