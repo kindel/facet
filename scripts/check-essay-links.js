@@ -52,12 +52,12 @@ for (const file of files) {
   let m;
   while ((m = dated.exec(text))) {
     const slug = m[1].toLowerCase();
-    if (bySlug[slug]) fail.push(path.relative(root, file) + ": " + m[0]);
+    if (Object.hasOwn(bySlug, slug)) fail.push(path.relative(root, file) + ": " + m[0]);
   }
   byP.lastIndex = 0;
   while ((m = byP.exec(text))) {
     const id = String(Number(m[1]));
-    if (byId[id]) fail.push(path.relative(root, file) + ": " + m[0]);
+    if (Object.hasOwn(byId, id)) fail.push(path.relative(root, file) + ": " + m[0]);
   }
 }
 if (fail.length) {

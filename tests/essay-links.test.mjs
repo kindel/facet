@@ -15,12 +15,20 @@ context.globalThis = context;
 vm.createContext(context);
 vm.runInContext(readFileSync(join(root, "js/essay-catalog.js"), "utf8"), context);
 const catalog = context.window.KINDEL_ESSAY_CATALOG;
+const snap = JSON.parse(readFileSync(join(root, "data/essay_slugs.json"), "utf8"));
 
 function apex(href) {
   const next = links.rewriteHref(href, catalog);
   if (typeof next === "string" && next.indexOf("/essays/") === 0) return "https://kindel.com" + next;
   return next;
 }
+
+test("the browser catalog matches the slug snapshot", () => {
+  // The catalog object is built inside vm, so compare parent-realm copies.
+  const live = JSON.parse(JSON.stringify(catalog));
+  assert.deepEqual(live.bySlug, snap.by_slug);
+  assert.deepEqual(live.byId, snap.by_id);
+});
 
 test("further reading for an essay opens on kindel.com", () => {
   const blog = "https://blog.kindel.com/" + "2020/02/10/tenets/";
@@ -65,7 +73,7 @@ test("checked-in copy does not point an essay at the blog", () => {
       dated.lastIndex = 0;
       let match;
       while ((match = dated.exec(text))) {
-        if (catalog.bySlug[match[1].toLowerCase()]) hits.push(relative(root, full) + ": " + match[0]);
+        if (Object.hasOwn(catalog.bySlug, match[1].toLowerCase())) hits.push(relative(root, full) + ": " + match[0]);
       }
     }
   }
