@@ -338,10 +338,102 @@
     return n;
   }
 
+  function teachingGroups(indexDoc, mapDocs) {
+    var slugOf = {};
+    ((indexDoc && indexDoc.companies) || []).forEach(function (company) {
+      if (!company || typeof company.id !== "string") return;
+      (company.principles || []).forEach(function (rec) {
+        if (rec && typeof rec.slug === "string") slugOf[company.id + ":" + rec.id] = rec.slug;
+      });
+    });
+    var parent = {};
+    function add(file) { if (!parent[file]) parent[file] = file; }
+    function find(file) {
+      add(file);
+      var root = file;
+      while (parent[root] !== root) root = parent[root];
+      while (parent[file] !== root) {
+        var next = parent[file];
+        parent[file] = root;
+        file = next;
+      }
+      return root;
+    }
+    function unite(a, b) {
+      var left = find(a);
+      var right = find(b);
+      if (left !== right) parent[right] = left;
+    }
+    (mapDocs || []).forEach(function (doc) {
+      if (!doc || typeof doc.source !== "string" || typeof doc.target !== "string") return;
+      unite("data/teaching/" + doc.source + "/index.json", "data/teaching/" + doc.target + "/index.json");
+      (doc.pairs || []).forEach(function (pair) {
+        var targetIds = pair && pair.targetIds;
+        if (!pair || typeof pair.sourceSlug !== "string" || !Array.isArray(targetIds) || targetIds.length !== 1) return;
+        var targetSlug = slugOf[doc.target + ":" + targetIds[0]];
+        if (!targetSlug) return;
+        unite(
+          "data/teaching/" + doc.source + "/" + pair.sourceSlug + ".json",
+          "data/teaching/" + doc.target + "/" + targetSlug + ".json"
+        );
+      });
+    });
+    var groups = {};
+    Object.keys(parent).forEach(function (file) {
+      var root = find(file);
+      if (!groups[root]) groups[root] = [];
+      groups[root].push(file);
+    });
+    return groups;
+  }
+
+  function filesForSave(changes) {
+    var files = {};
+    function add(key) {
+      if (Object.prototype.hasOwnProperty.call(files, key)) return;
+      var stored = S.files[key];
+      if (stored && typeof stored.text === "string") files[key] = stored.text;
+    }
+    var needIndex = false;
+    var needMaps = false;
+    var needQuestions = false;
+    var needFacets = false;
+    var teachingFiles = [];
+    (changes || []).forEach(function (change) {
+      if (!change || !change.repo || !change.file) return;
+      if (change.op !== "create") add(change.repo + ":" + change.file);
+      var facetChange = change.file === "data/facets.json" || change.listKind === "facet" || (Array.isArray(change.path) && change.path[change.path.length - 1] === "facets");
+      var teachingChange = change.repo === "principles" && change.file.indexOf("data/teaching/") === 0;
+      if (teachingChange) teachingFiles.push(change.file);
+      if (change.repo === "principles" || teachingChange || facetChange) needIndex = true;
+      if (teachingChange || facetChange) needMaps = true;
+      if (change.repo === "biq" || facetChange) needQuestions = true;
+      if (facetChange) needFacets = true;
+    });
+    if (needIndex) add("principles:data/index.json");
+    if (needFacets) add("principles:data/facets.json");
+    if (needQuestions) add("biq:data/questions.json");
+    if (needMaps && S.maps) S.maps.forEach(function (map) { if (map && map.file) add("principles:" + map.file); });
+    if (teachingFiles.length) {
+      var indexDoc = S.files["principles:data/index.json"];
+      var mapDocs = (S.maps || []).map(function (map) { return map.json; });
+      var groups = teachingGroups(indexDoc && indexDoc.json, mapDocs);
+      var clusterOf = {};
+      Object.keys(groups).forEach(function (root) {
+        groups[root].forEach(function (file) { clusterOf[file] = groups[root]; });
+      });
+      teachingFiles.forEach(function (file) {
+        (clusterOf[file] || []).forEach(function (sibling) { add("principles:" + sibling); });
+      });
+    }
+    return files;
+  }
+
   function batchError(list) {
     if (list.length > MAX_CHANGES) return "This batch has " + list.length + " edits. Save at most " + MAX_CHANGES + " at a time.";
     var files = fileCount(list);
     if (files > MAX_FILES) return "This batch touches " + files + " files. Save at most " + MAX_FILES + " at a time.";
+    if (Object.keys(filesForSave(list)).length > MAX_FILES) return "Too many files in one save.";
     return "";
   }
 
@@ -1117,7 +1209,7 @@
       type: "button",
       class: "ed-icon",
       "data-delete-item": item.id,
-      "aria-label": "Delete",
+      "aria-label": "Delete " + (clip(listLabel(item), 80) || "item"),
     }, "Delete"));
     return wrap;
   }
@@ -1791,11 +1883,15 @@
     if (!changes.length || hasErrors() || batchError(changes) || S.saving) return;
     S.saving = true;
     renderPending();
-    var files = {};
+    var files = filesForSave(changes);
     var slugs = {};
-    Object.keys(S.files).forEach(function (key) {
-      if (S.files[key] && typeof S.files[key].text === "string") files[key] = S.files[key].text;
-    });
+    if (Object.keys(files).length > MAX_FILES) {
+      S.saving = false;
+      S.result = { error: "Too many files in one save." };
+      renderPending();
+      renderEditor();
+      return;
+    }
     changes.forEach(function (change) {
       var item = itemById(change.itemId);
       var company = (item && item.company) || change.company;
@@ -2146,6 +2242,16 @@
 
   function slugify(text) {
     return String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  }
+
+  function uniqueRowId(base, used) {
+    var id = base;
+    var n = 2;
+    while (used[id]) {
+      id = base + "-" + n;
+      n += 1;
+    }
+    return id;
   }
 
   function addLabel(kind) {
@@ -2564,9 +2670,20 @@
 
   function essayProblem(url) {
     var cat = window.KINDEL_ESSAY_CATALOG;
-    var match = /^https:\/\/blog\.kindel\.com\/\d{4}\/\d{2}\/\d{2}\/([a-z0-9-]+)\/?$/.exec(String(url || "").trim());
-    if (!match || !cat || !cat.bySlug || !cat.bySlug[match[1]]) return "";
-    return "This essay has to use https://kindel.com/essays/" + match[1] + "/.";
+    var parsed;
+    try { parsed = new URL(String(url || "").trim()); } catch (err) { return ""; }
+    if (parsed.protocol !== "https:" || parsed.hostname !== "blog.kindel.com" || !cat) return "";
+    var dated = /^\/\d{4}\/\d{2}\/\d{2}\/([a-z0-9-]+)\/?$/.exec(parsed.pathname);
+    if (dated && cat.bySlug && cat.bySlug[dated[1]]) {
+      var slug = cat.bySlug[dated[1]];
+      if (typeof slug !== "string" || !slug) slug = dated[1];
+      return "This essay has to use https://kindel.com/essays/" + slug + "/.";
+    }
+    var postId = parsed.searchParams.get("p");
+    if (postId && cat.byId && typeof cat.byId[postId] === "string" && cat.byId[postId]) {
+      return "This essay has to use https://kindel.com/essays/" + cat.byId[postId] + "/.";
+    }
+    return "";
   }
 
   function dashProblem(text, allowEnDash) {
@@ -3091,7 +3208,7 @@
     });
     var rowId = slugify(situation);
     if (!rowId) return "A row id has to be kebab-case.";
-    if (used[rowId]) rowId = rowId + "-row";
+    rowId = uniqueRowId(rowId, used);
     rows.push({ id: rowId, situation: situation, under: under, justRight: justRight, over: over, words: "generated" });
     var value = { id: id, label: label, principles: ids.slice(), rows: rows };
     var batch = "facet:" + nextSeq();
@@ -3476,7 +3593,7 @@
       var existing = replayValues(draft.repo, draft.file, draft.path, originalArray(draft.repo, draft.file, draft.path));
       var taken = {};
       existing.forEach(function (row) { if (row && row.id) taken[row.id] = true; });
-      if (taken[rowId]) rowId = rowId + "-2";
+      rowId = uniqueRowId(rowId, taken);
       value = {
         id: rowId,
         situation: String(fields.situation).trim(),

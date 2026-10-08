@@ -598,6 +598,116 @@ test("a reused set-level reading edit keeps the set label", () => {
   assert.doesNotMatch(body, /### index/);
 });
 
+test("a matching reused catalog entry is already satisfied", () => {
+  const texts = {
+    "principles:data/teaching/generic/index.json": JSON.stringify({
+      principles: [{ id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" }],
+    }),
+    "principles:data/teaching/amazon/index.json": JSON.stringify({
+      principles: [{ id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" }],
+    }),
+  };
+  const result = reuse.expand([{
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 1,
+    seq: 3,
+    value: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+    company: "generic",
+  }], index, maps, texts);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.changes.length, 1);
+});
+
+test("a reused catalog insert refuses an entry that does not match", () => {
+  const result = reuse.expand([{
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 0,
+    seq: 5,
+    value: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+    company: "generic",
+  }], index, maps, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({ principles: [] }),
+    "principles:data/teaching/amazon/index.json": JSON.stringify({
+      principles: [{ id: 9999, slug: "invent-and-simplify", file: "invent-and-simplify.json" }],
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /does not match/);
+});
+
+test("a reused catalog move keeps the destination id", () => {
+  const result = reuse.expand([{
+    op: "move",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 0,
+    to: 1,
+    seq: 4,
+    before: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+    company: "generic",
+  }], index, maps, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({
+      principles: [
+        { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+        { id: 8001, slug: "customer-obsession", file: "customer-obsession.json" },
+      ],
+    }),
+    "principles:data/teaching/amazon/index.json": JSON.stringify({
+      principles: [
+        { id: 1001, slug: "customer-obsession", file: "customer-obsession.json" },
+        { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+      ],
+    }),
+  });
+  assert.equal(result.ok, true, result.error);
+  const copy = result.changes[1];
+  assert.equal(copy.op, "move");
+  assert.equal(copy.file, "data/teaching/amazon/index.json");
+  assert.equal(copy.index, 1);
+  assert.equal(copy.to, 1);
+  assert.equal(copy.before.id, 1003);
+});
+
+test("two removes on one reused list use the list after the first removal", () => {
+  const result = reuse.expand([
+    {
+      op: "remove",
+      repo: "principles",
+      file: "data/teaching/generic/invent-and-simplify.json",
+      path: ["deepen"],
+      index: 0,
+      seq: 1,
+      before: "Other question?",
+      company: "generic",
+    },
+    {
+      op: "remove",
+      repo: "principles",
+      file: "data/teaching/generic/invent-and-simplify.json",
+      path: ["deepen"],
+      index: 0,
+      seq: 2,
+      before: BEFORE,
+      company: "generic",
+    },
+  ], index, maps, filesFor(BEFORE));
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.changes.length, 4);
+  const copies = result.changes.filter((one) => one.file.indexOf("/amazon/") !== -1);
+  assert.equal(copies.length, 2);
+  assert.equal(copies[0].before, "Other question?");
+  assert.equal(copies[1].before, BEFORE);
+  assert.equal(copies[0].index, 0);
+  assert.equal(copies[1].index, 0);
+});
+
 test("two agreeing edits of the same reused field stay as the caller sent them", () => {
   const generic = Object.assign({}, edit, {
     file: "data/teaching/generic/invent-and-simplify.json",

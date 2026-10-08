@@ -201,10 +201,54 @@ test("removing a facet that is still linked is refused, and so is a bare table",
 
 test("an essay permalink has to use the kindel essays path", () => {
   const essay = "https://blog.kindel.com/" + "2024/07/23/how-to-write-a-working-backwards-doc/";
+  const queried = "https://blog.kindel.com/" + "2024/07/23/how-to-write-a-working-backwards-doc/?utm=1";
   const other = "https://blog.kindel.com/" + "2019/05/30/focusing-on-users-is-not-customer-obsession/";
   assert.match(rules.essayUrlError(essay, ["how-to-write-a-working-backwards-doc"]), /kindel.com\/essays\/how-to-write-a-working-backwards-doc/);
+  assert.match(rules.essayUrlError(queried, ["how-to-write-a-working-backwards-doc"]), /kindel.com\/essays\/how-to-write-a-working-backwards-doc/);
   assert.equal(rules.essayUrlError("https://kindel.com/essays/how-to-write-a-working-backwards-doc/", ["how-to-write-a-working-backwards-doc"]), "");
   assert.equal(rules.essayUrlError(other, ["how-to-write-a-working-backwards-doc"]), "");
+  const inserted = rules.checkItem({
+    title: "Working Backwards",
+    url: essay,
+    note: "A note.",
+  }, { item: "blog" });
+  assert.match(inserted.join("\n"), /kindel.com\/essays\/how-to-write-a-working-backwards-doc/);
+  const byId = rules.checkItem({
+    title: "The 5 Ps",
+    url: "https://blog.kindel.com/?p=419",
+    note: "A note.",
+  }, { item: "blog" });
+  assert.match(byId.join("\n"), /essays\/the-5-ps-achieving-focus-in-any-endeavor/);
+});
+
+test("removing a teaching record also has to clear its catalog entry", () => {
+  const catalog = JSON.stringify({
+    principles: [{ id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" }],
+  });
+  const record = "data/teaching/generic/invent-and-simplify.json";
+  const before = {
+    "principles:data/teaching/generic/index.json": catalog,
+    ["principles:" + record]: "{}\n",
+  };
+  const removal = {
+    op: "delete",
+    repo: "principles",
+    file: record,
+    path: [],
+  };
+  assert.match(guard.review(before, before, [removal]).join("\n"), /still leaves it in the teaching catalog/);
+  assert.match(guard.review({}, {}, [removal]).join("\n"), /needs its teaching catalog/);
+  const cleared = guard.review(before, Object.assign({}, before, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({ principles: [{ id: 8001, slug: "ownership", file: "ownership.json" }] }),
+  }), [removal]);
+  assert.equal(cleared.length, 0);
+  const dropped = guard.review(before, {}, [removal, {
+    op: "delete",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: [],
+  }]);
+  assert.equal(dropped.length, 0);
 });
 
 test("a shared BIQ list cannot grow on the company that only displays it", () => {
