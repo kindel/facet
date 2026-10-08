@@ -7,6 +7,16 @@ const patch = require("../lib/patch.js");
 const plan = require("../lib/plan.js");
 const rules = require("../lib/rules.js");
 
+function amazonIndex(slugs) {
+  const ids = { ownership: 1002, "bias-for-action": 1003, "deliver-results": 1004, constructor: 1005 };
+  return JSON.stringify({
+    companies: [{
+      id: "amazon",
+      principles: slugs.map((slug) => ({ id: ids[slug], slug: slug })),
+    }],
+  });
+}
+
 const original = `{
   "id": 1002,
   "slug": "ownership",
@@ -176,8 +186,12 @@ test("a principle link in a related note must be listed in related", () => {
   ]
 }
 `;
+  const files = {
+    "principles:data/index.json": amazonIndex(slugs),
+    "principles:data/teaching/amazon/ownership.json": teaching,
+  };
   const missing = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",
@@ -190,7 +204,7 @@ test("a principle link in a related note must be listed in related", () => {
   assert.equal(missing.ok, false);
   assert.match(missing.errors[0].error, /\{lp:deliver-results\} is missing from related/);
   const listed = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",
@@ -211,8 +225,12 @@ test("a further reading note rejects an unknown or broken principle link", () =>
   ]
 }
 `;
+  const files = {
+    "principles:data/index.json": amazonIndex(slugs),
+    "principles:data/teaching/amazon/ownership.json": teaching,
+  };
   const unknown = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",
@@ -220,12 +238,12 @@ test("a further reading note rejects an unknown or broken principle link", () =>
       before: "Why it belongs.",
       after: "See {lp:not-a-principle}.",
     }],
-    { amazon: slugs }
+    { amazon: slugs.concat(["not-a-principle"]) }
   );
   assert.equal(unknown.ok, false);
   assert.match(unknown.errors[0].error, /Unknown principle link \{lp:not-a-principle\}/);
   const broken = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",
@@ -302,13 +320,20 @@ test("a teaching save without the company's principle list is rejected", () => {
   assert.match(wrongType.errors[0].error, /principle list/);
   const checked = plan.prepare(files, [change], { amazon: ["ownership", "deliver-results"] });
   assert.equal(checked.ok, false);
-  assert.match(checked.errors[0].error, /\{lp:deliver-results\} is missing from related/);
-  const hidden = plan.prepare(files, [{
+  assert.match(checked.errors[0].error, /principle list/);
+  const loaded = {
+    "principles:data/index.json": amazonIndex(["ownership", "deliver-results"]),
+    "principles:data/teaching/amazon/ownership.json": teaching,
+  };
+  const fromIndex = plan.prepare(loaded, [change], { amazon: ["ownership", "deliver-results", "not-a-principle"] });
+  assert.equal(fromIndex.ok, false);
+  assert.match(fromIndex.errors[0].error, /\{lp:deliver-results\} is missing from related/);
+  const hidden = plan.prepare(loaded, [{
     ...change,
     after: "See {lp:constructor}.",
   }], { amazon: ["ownership", "constructor"] });
   assert.equal(hidden.ok, false);
-  assert.match(hidden.errors[0].error, /\{lp:constructor\} is missing from related/);
+  assert.match(hidden.errors[0].error, /Unknown principle link \{lp:constructor\}/);
 });
 
 test("a teaching link must resolve and be listed in related", () => {
@@ -370,8 +395,12 @@ test("deepen questions must end with a question mark", () => {
   ]
 }
 `;
+  const files = {
+    "principles:data/index.json": amazonIndex(["ownership"]),
+    "principles:data/teaching/amazon/ownership.json": teaching,
+  };
   const bad = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",
@@ -384,7 +413,7 @@ test("deepen questions must end with a question mark", () => {
   assert.equal(bad.ok, false);
   assert.match(bad.errors[0].error, /\?/);
   const good = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",
@@ -594,4 +623,180 @@ test("sentence split matches the principles validator", () => {
   assert.equal(rules.sentenceCount('Seeks input and is not "always." Seeks it again.'), 2);
   assert.equal(rules.sentenceCount("One sentence only."), 1);
   assert.equal(rules.sentenceCount("One. Two. Three."), 3);
+});
+
+const deepen = `{
+  "deepen": [
+    "One?",
+    "Two?",
+    "Three?"
+  ]
+}
+`;
+
+const blog = `{
+  "blog": [
+    {
+      "title": "One",
+      "url": "https://kindel.com/a",
+      "note": "A"
+    },
+    {
+      "title": "Two",
+      "url": "https://kindel.com/b",
+      "note": "B"
+    }
+  ]
+}
+`;
+
+test("insert, remove, and move keep the surrounding list formatting", () => {
+  const removedFirst = patch.applyPatches(deepen, [{ op: "remove", path: ["deepen"], index: 0, before: "One?" }]);
+  assert.equal(removedFirst, `{
+  "deepen": [
+    "Two?",
+    "Three?"
+  ]
+}
+`);
+
+  const removedMiddle = patch.applyPatches(deepen, [{ op: "remove", path: ["deepen"], index: 1, before: "Two?" }]);
+  assert.equal(removedMiddle, `{
+  "deepen": [
+    "One?",
+    "Three?"
+  ]
+}
+`);
+
+  const removedLast = patch.applyPatches(deepen, [{ op: "remove", path: ["deepen"], index: 2, before: "Three?" }]);
+  assert.equal(removedLast, `{
+  "deepen": [
+    "One?",
+    "Two?"
+  ]
+}
+`);
+
+  const only = `{
+  "deepen": [
+    "Only?"
+  ]
+}
+`;
+  const removedOnly = patch.applyPatches(only, [{ op: "remove", path: ["deepen"], index: 0, before: "Only?" }]);
+  assert.equal(removedOnly, `{
+  "deepen": [
+  ]
+}
+`);
+  assert.deepEqual(JSON.parse(removedOnly).deepen, []);
+
+  const insertedFirst = patch.applyPatches(deepen, [{ op: "insert", path: ["deepen"], index: 0, value: "Zero?" }]);
+  assert.equal(insertedFirst, `{
+  "deepen": [
+    "Zero?",
+    "One?",
+    "Two?",
+    "Three?"
+  ]
+}
+`);
+
+  const insertedMiddle = patch.applyPatches(deepen, [{ op: "insert", path: ["deepen"], index: 1, value: "Mid?" }]);
+  assert.equal(JSON.parse(insertedMiddle).deepen[1], "Mid?");
+  assert.ok(insertedMiddle.includes('    "One?",\n    "Mid?",\n    "Two?",'));
+
+  const insertedLast = patch.applyPatches(deepen, [{ op: "insert", path: ["deepen"], index: 3, value: "Four?" }]);
+  assert.ok(insertedLast.includes('    "Three?",\n    "Four?"\n  ]'));
+  assert.equal(JSON.parse(insertedLast).deepen[3], "Four?");
+
+  const empty = `{
+  "deepen": [
+  ]
+}
+`;
+  const insertedEmpty = patch.applyPatches(empty, [{ op: "insert", path: ["deepen"], index: 0, value: "First?" }]);
+  assert.equal(insertedEmpty, `{
+  "deepen": [
+    "First?"
+  ]
+}
+`);
+
+  const compactEmpty = '{ "deepen": [] }\n';
+  const insertedCompact = patch.applyPatches(compactEmpty, [{ op: "insert", path: ["deepen"], index: 0, value: "First?" }]);
+  assert.equal(insertedCompact, '{ "deepen": ["First?"] }\n');
+
+  const movedDown = patch.applyPatches(deepen, [{ op: "move", path: ["deepen"], index: 0, to: 2, before: "One?" }]);
+  assert.deepEqual(JSON.parse(movedDown).deepen, ["Two?", "Three?", "One?"]);
+  assert.ok(movedDown.includes('    "Two?",\n    "Three?",\n    "One?"'));
+
+  const movedUp = patch.applyPatches(deepen, [{ op: "move", path: ["deepen"], index: 2, to: 0, before: "Three?" }]);
+  assert.deepEqual(JSON.parse(movedUp).deepen, ["Three?", "One?", "Two?"]);
+  assert.ok(movedUp.includes('    "Three?",\n    "One?",\n    "Two?"'));
+
+  const movedMiddle = patch.applyPatches(deepen, [{ op: "move", path: ["deepen"], index: 1, to: 2, before: "Two?" }]);
+  assert.deepEqual(JSON.parse(movedMiddle).deepen, ["One?", "Three?", "Two?"]);
+
+  assert.throws(
+    () => patch.applyPatches(only, [{ op: "move", path: ["deepen"], index: 0, to: 0, before: "Only?" }]),
+    (err) => err.code === "CONFLICT"
+  );
+  assert.throws(
+    () => patch.applyPatches(deepen, [{ op: "remove", path: ["deepen"], index: 1, before: "Nope?" }]),
+    (err) => err.code === "CONFLICT"
+  );
+});
+
+test("a list edit leaves object bytes and neighbor lines alone", () => {
+  const removed = patch.applyPatches(blog, [{
+    op: "remove",
+    path: ["blog"],
+    index: 0,
+    before: { title: "One", url: "https://kindel.com/a", note: "A" },
+  }]);
+  assert.ok(removed.includes('      "title": "Two",'));
+  assert.ok(!removed.includes('"title": "One"'));
+  assert.equal(JSON.parse(removed).blog.length, 1);
+
+  const added = patch.applyPatches(blog, [{
+    op: "insert",
+    path: ["blog"],
+    index: 2,
+    value: { title: "Three", url: "https://kindel.com/c", note: "C" },
+  }]);
+  assert.ok(added.includes('      "title": "Two",'));
+  assert.ok(added.includes('      "note": "B"\n    },\n    {'));
+  assert.equal(JSON.parse(added).blog[2].url, "https://kindel.com/c");
+  assert.ok(added.includes('      "title": "One",'));
+
+  const moved = patch.applyPatches(blog, [{
+    op: "move",
+    path: ["blog"],
+    index: 1,
+    to: 0,
+    before: { title: "Two", url: "https://kindel.com/b", note: "B" },
+  }]);
+  assert.deepEqual(JSON.parse(moved).blog.map((item) => item.title), ["Two", "One"]);
+  assert.ok(moved.includes('      "url": "https://kindel.com/b",'));
+  assert.ok(moved.includes('      "url": "https://kindel.com/a",'));
+
+  const compact = '{ "deepen": ["One?", "Two?", "Three?"] }\n';
+  assert.equal(
+    patch.applyPatches(compact, [{ op: "remove", path: ["deepen"], index: 0, before: "One?" }]),
+    '{ "deepen": ["Two?", "Three?"] }\n'
+  );
+  assert.equal(
+    patch.applyPatches(compact, [{ op: "remove", path: ["deepen"], index: 1, before: "Two?" }]),
+    '{ "deepen": ["One?", "Three?"] }\n'
+  );
+  assert.equal(
+    patch.applyPatches(compact, [{ op: "remove", path: ["deepen"], index: 2, before: "Three?" }]),
+    '{ "deepen": ["One?", "Two?"] }\n'
+  );
+  assert.equal(
+    patch.applyPatches(compact, [{ op: "insert", path: ["deepen"], index: 1, value: "Mid?" }]),
+    '{ "deepen": ["One?", "Mid?", "Two?", "Three?"] }\n'
+  );
 });
