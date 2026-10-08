@@ -28,6 +28,8 @@ The save function stays on the host, because that is where the token lives. `lib
 
 `lib/reuse.js` repeats a teaching edit on every reused copy that still has the same text. The derivation maps in the principles data name those copies. A slug rename is rewritten into each copy, including through a chain of maps, so a renamed principle slug is not treated as a content change. Another field in that file can still differ. Editing the field that already differs is refused, because saving one side would fail the principles validator. That difference stays on the map.
 
+A principle link is inserted at the field's last caret. The menu takes focus before it changes, so the caret is remembered on input, keyup, click, select, and blur. A space is added only when the neighbor is not already whitespace. A field that never had focus gets the token at the end.
+
 `card.json` is status beta and unlisted. Do not drop unlisted to put the app on the catalog grid unless Tig says so.
 
 The label on the pull requests this app opens is `editor-submission`. It already exists on kindel/principles and kindel/biq. Do not rename it. The token does not need Issues write to apply that label.
