@@ -71,6 +71,57 @@ test("a reused concrete question delete is copied onto every matching file", () 
   assert.equal(result.changes[1].index, 1);
 });
 
+test("a reused teaching catalog entry keeps the other company's id", () => {
+  const genericIndex = JSON.stringify({
+    principles: [{ id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" }],
+  });
+  const amazonIndex = JSON.stringify({
+    principles: [
+      { id: 1001, slug: "customer-obsession", file: "customer-obsession.json" },
+      { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+    ],
+  });
+  const texts = Object.assign(filesFor(BEFORE), {
+    "principles:data/teaching/generic/index.json": genericIndex,
+    "principles:data/teaching/amazon/index.json": amazonIndex,
+  });
+  const removed = reuse.expand([{
+    op: "remove",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 0,
+    seq: 1,
+    before: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+    label: "Invent and Simplify",
+    field: "deleted",
+    company: "generic",
+  }], index, maps, texts);
+  assert.equal(removed.ok, true, removed.error);
+  const copy = removed.changes[1];
+  assert.equal(copy.file, "data/teaching/amazon/index.json");
+  assert.equal(copy.index, 1);
+  assert.equal(copy.before.id, 1003);
+  const added = reuse.expand([{
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 1,
+    seq: 2,
+    value: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+    label: "Invent and Simplify",
+    field: "added",
+    company: "generic",
+  }], index, maps, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({ principles: [] }),
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ principles: [] }),
+  });
+  assert.equal(added.ok, true, added.error);
+  assert.equal(added.changes[1].index, 0);
+  assert.deepEqual(added.changes[1].value, { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" });
+});
+
 test("a reused list that already differs is refused", () => {
   const result = reuse.expand([Object.assign({}, edit, {
     op: "remove",
