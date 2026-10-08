@@ -258,6 +258,59 @@ test("a principle link in a further reading note must be listed in related", () 
   assert.deepEqual(rules.teachingLinks(doc, slugs, true), []);
 });
 
+test("a prototype slug such as constructor is still checked", () => {
+  const slugs = ["ownership", "constructor"];
+  const doc = {
+    why: ["See {lp:constructor}."],
+    related: [{ id: "ownership", note: "The owner." }],
+    blog: [{
+      title: "A note",
+      url: "https://blog.kindel.com/x/",
+      note: "Also see {lp:constructor}.",
+    }],
+  };
+  const missing = rules.teachingLinks(doc, slugs, true);
+  assert.ok(missing.includes("{lp:constructor} is missing from related."), JSON.stringify(missing));
+  assert.equal(missing.length, 1);
+  doc.related.push({ id: "constructor", note: "The builder." });
+  assert.deepEqual(rules.teachingLinks(doc, slugs, true), []);
+  const unknown = rules.checkText("See {lp:constructor}.", { tokens: true, slugs: ["ownership"] });
+  assert.match(unknown[0] || "", /Unknown principle link \{lp:constructor\}/);
+});
+
+test("a teaching save without the company's principle list is rejected", () => {
+  const teaching = `{
+  "blog": [
+    {"title": "A note", "url": "https://blog.kindel.com/x/", "note": "Why it belongs."}
+  ],
+  "related": [{"id": "ownership", "note": "The owner."}]
+}
+`;
+  const change = {
+    repo: "principles",
+    file: "data/teaching/amazon/ownership.json",
+    path: ["blog", 0, "note"],
+    before: "Why it belongs.",
+    after: "See {lp:deliver-results}.",
+  };
+  const files = { "principles:data/teaching/amazon/ownership.json": teaching };
+  const omitted = plan.prepare(files, [change]);
+  assert.equal(omitted.ok, false);
+  assert.match(omitted.errors[0].error, /principle list/);
+  const wrongType = plan.prepare(files, [change], { amazon: { length: 1 } });
+  assert.equal(wrongType.ok, false);
+  assert.match(wrongType.errors[0].error, /principle list/);
+  const checked = plan.prepare(files, [change], { amazon: ["ownership", "deliver-results"] });
+  assert.equal(checked.ok, false);
+  assert.match(checked.errors[0].error, /\{lp:deliver-results\} is missing from related/);
+  const hidden = plan.prepare(files, [{
+    ...change,
+    after: "See {lp:constructor}.",
+  }], { amazon: ["ownership", "constructor"] });
+  assert.equal(hidden.ok, false);
+  assert.match(hidden.errors[0].error, /\{lp:constructor\} is missing from related/);
+});
+
 test("a teaching link must resolve and be listed in related", () => {
   const doc = {
     why: ["See {lp:ownership}."],
@@ -325,7 +378,8 @@ test("deepen questions must end with a question mark", () => {
       path: ["deepen", 0],
       before: "Who owns the outcome?",
       after: "Who owns the outcome",
-    }]
+    }],
+    { amazon: ["ownership"] }
   );
   assert.equal(bad.ok, false);
   assert.match(bad.errors[0].error, /\?/);
@@ -337,7 +391,8 @@ test("deepen questions must end with a question mark", () => {
       path: ["deepen", 0],
       before: "Who owns the outcome?",
       after: "Who owns the outcome now?",
-    }]
+    }],
+    { amazon: ["ownership"] }
   );
   assert.equal(good.ok, true);
   assert.match(good.files[0].after, /Who owns the outcome now\?/);

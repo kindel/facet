@@ -157,7 +157,7 @@
         linkAt = close + 1;
       }
       if (spec.slugs) {
-        var seen = {};
+        var seen = Object.create(null);
         var re = /\{lp:([a-z0-9]+(?:-[a-z0-9]+)*)\}/g;
         var m;
         while ((m = re.exec(text))) {
@@ -264,7 +264,7 @@
     var related = relatedIdsFor(item);
     if (!related || String(text || "").indexOf("{lp:") === -1) return [];
     var errors = [];
-    var seen = {};
+    var seen = Object.create(null);
     var re = /\{lp:([a-z0-9]+(?:-[a-z0-9]+)*)\}/g;
     var match;
     var slugs = slugsFor(item.company);
