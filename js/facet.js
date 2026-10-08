@@ -53,6 +53,14 @@
     restored: 0,
     restoredStale: 0,
     pendingOpen: false,
+    maps: [],
+    mapsNote: "",
+    draft: null,
+    notice: "",
+    addButtons: [],
+    lists: [],
+    listByKey: Object.create(null),
+    teachingAdds: [],
   };
 
   var root = document.getElementById("kld-editor");
@@ -209,6 +217,8 @@
 
   function itemById(id) {
     for (var i = 0; i < S.items.length; i++) if (S.items[i].id === id) return S.items[i];
+    var base = S.base || [];
+    for (var b = 0; b < base.length; b++) if (base[b].id === id) return base[b];
     return null;
   }
 
@@ -294,6 +304,7 @@
   }
 
   function changeErrors(change) {
+    if (change.op) return listChangeErrors(change);
     if (change.stale) return ["Stale. The text changed, so the current text is shown. Undo this edit, then edit again."];
     var item = itemById(change.itemId);
     if (!item) return ["That edit is no longer on the page. Undo it."];
@@ -384,6 +395,17 @@
         principleName: change.principleName || "",
         shared: !!change.shared,
         sha: change.sha || "",
+        op: change.op || "",
+        index: change.index,
+        to: change.to,
+        seq: change.seq,
+        value: change.value,
+        listKind: change.listKind || "",
+        type: change.type || "",
+        itemKind: change.itemKind || "",
+        kicker: change.kicker || "",
+        tags: change.tags || [],
+        batch: change.batch || "",
       };
       if (change.sha) files[change.repo + ":" + change.file] = change.sha;
     });
@@ -450,6 +472,10 @@
       var saved = data.edits[ids[i]];
       if (!saved || typeof saved !== "object") continue;
       if (typeof saved.repo !== "string" || typeof saved.file !== "string" || !Array.isArray(saved.path)) continue;
+      if (saved.op) {
+        if (restoreOp(saved)) n++;
+        continue;
+      }
       if (saved.path.length < 1 || saved.path.length > 8) continue;
       if (typeof saved.before !== "string" || typeof saved.after !== "string") continue;
       if (saved.before.length > 16000 || saved.after.length > 16000) continue;
@@ -969,6 +995,7 @@
       return String(a.title).localeCompare(String(b.title));
     });
     S.items = items;
+    finishLists();
   }
 
   function matches(item) {
@@ -1073,38 +1100,48 @@
     });
     btn.appendChild(el("span", { class: "ed-row-label" }, listLabel(item)));
     var hit = itemPending(item);
-    if (hit) {
+    if (hit || item.synthetic) {
       btn.appendChild(el("span", {
-        class: "ed-dot" + (hit.stale ? " is-stale" : ""),
+        class: "ed-dot" + (hit && hit.stale ? " is-stale" : ""),
         role: "img",
-        "aria-label": hit.stale ? "Stale edit" : "Pending edit",
+        "aria-label": hit && hit.stale ? "Stale edit" : "Pending edit",
       }));
     }
     var where = listWhere(item);
     if (where) btn.appendChild(el("span", { class: "ed-row-where" }, where));
-    return btn;
+    if (!item.listPath) return btn;
+    var wrap = el("div", { class: "ed-row-wrap" });
+    wrap.appendChild(btn);
+    wrap.appendChild(el("button", {
+      type: "button",
+      class: "ed-icon",
+      "data-delete-item": item.id,
+      "aria-label": "Delete",
+    }, "Delete"));
+    return wrap;
   }
 
   function renderList() {
+    project();
     var pane = document.getElementById("ed-list");
     if (!pane) return;
     var top = pane.scrollTop;
     clear(pane);
+    S.addButtons = [];
+    if (S.notice && !S.draft) pane.appendChild(el("p", { class: "ed-warn", id: "ed-notice" }, S.notice));
     var rows = visible();
     var count = el("p", { class: "ed-count" }, rows.length + (rows.length === 1 ? " item" : " items"));
     pane.appendChild(count);
-    if (!rows.length) {
-      pane.appendChild(el("p", { class: "ed-empty" }, "Nothing matches these filters."));
-      pane.scrollTop = top;
-      return;
-    }
     if (S.filters.view === "drill") {
       renderDrill(pane, rows);
+      appendFacetAdd(pane);
       pane.scrollTop = top;
       return;
     }
     if (S.filters.group === "none") {
       rows.forEach(function (item) { pane.appendChild(renderRow(item)); });
+      seenAddHomes(rows).forEach(function (home) { appendAdds(pane, home.companyId, home.principleId); });
+      appendFacetAdd(pane);
       pane.scrollTop = top;
       return;
     }
@@ -1137,11 +1174,70 @@
       if (a.companyIndex !== b.companyIndex) return a.companyIndex - b.companyIndex;
       return a.sort - b.sort;
     });
+    ensureAddGroups(groups, index);
+    groups.sort(function (a, b) {
+      if (a.companyIndex !== b.companyIndex) return a.companyIndex - b.companyIndex;
+      return a.sort - b.sort;
+    });
     groups.forEach(function (group) {
       pane.appendChild(el("h2", { class: "ed-group" }, group.title));
       group.items.forEach(function (item) { pane.appendChild(renderRow(item)); });
+      if (S.filters.group === "company") {
+        var co = S.companies.filter(function (item) { return item.id === group.key; })[0];
+        ((co && co.principles) || []).forEach(function (pr) { appendAdds(pane, co.id, pr.id); });
+      } else {
+        var bits = String(group.key).split(":");
+        appendAdds(pane, bits[0], bits[1]);
+      }
     });
+    appendFacetAdd(pane);
+    if (!rows.length && !pane.querySelector(".ed-add")) {
+      pane.appendChild(el("p", { class: "ed-empty" }, "Nothing matches these filters."));
+    }
     pane.scrollTop = top;
+  }
+
+  function seenAddHomes(rows) {
+    var homes = [];
+    var seen = {};
+    function add(companyId, principleId) {
+      var key = companyId + ":" + principleId;
+      if (!companyId || seen[key]) return;
+      if (!addsFor(companyId, principleId).length) return;
+      seen[key] = true;
+      homes.push({ companyId: companyId, principleId: principleId });
+    }
+    rows.forEach(function (item) {
+      (item.tags || []).forEach(function (tag) { add(tag.companyId, tag.principleId); });
+    });
+    (S.lists || []).forEach(function (spec) { add(spec.companyId, spec.principleId); });
+    (S.teachingAdds || []).forEach(function (spec) { add(spec.companyId, spec.principleId); });
+    return homes;
+  }
+
+  function ensureAddGroups(groups, index) {
+    function consider(spec) {
+      if (S.filters.type !== "all" && spec.type !== S.filters.type) return;
+      if (S.filters.companies.length && S.filters.companies.indexOf(spec.companyId) === -1) return;
+      if (S.filters.group === "principle" && S.filters.principles.length && S.filters.principles.indexOf(String(spec.principleId)) === -1) return;
+      var key = S.filters.group === "company" ? spec.companyId : spec.companyId + ":" + spec.principleId;
+      if (!key || index[key]) return;
+      index[key] = {
+        key: key,
+        title: S.filters.group === "company" ? spec.companyName : spec.principleName + " · " + spec.companyName,
+        companyIndex: spec.companyIndex == null ? 99 : spec.companyIndex,
+        sort: spec.sort == null ? 999 : spec.sort,
+        items: [],
+      };
+      groups.push(index[key]);
+    }
+    (S.lists || []).forEach(consider);
+    (S.teachingAdds || []).forEach(consider);
+  }
+
+  function appendFacetAdd(pane) {
+    if (S.filters.type !== "all" && S.filters.type !== "facets") return;
+    pane.appendChild(addButton({ mode: "facet", kind: "facet", type: "facets", label: "Add a facet" }));
   }
 
   function renderDrill(pane, rows) {
@@ -1149,9 +1245,10 @@
       if (S.filters.companies.length && S.filters.companies.indexOf(co.id) === -1) return;
       var principles = (co.principles || []).filter(function (pr) {
         if (S.filters.principles.length && S.filters.principles.indexOf(String(pr.id)) === -1) return false;
-        return rows.some(function (item) {
+        var hasRows = rows.some(function (item) {
           return item.tags.some(function (tag) { return tag.principleId === pr.id; });
         });
+        return hasRows || addsFor(co.id, pr.id).length > 0;
       });
       if (!principles.length) return;
       var openCo = S.filters.oc === co.id;
@@ -1167,16 +1264,22 @@
         rows.filter(function (item) {
           return item.tags.some(function (tag) { return tag.principleId === pr.id; });
         }).forEach(function (item) { kids.appendChild(renderRow(item)); });
+        appendAdds(kids, co.id, pr.id);
         pane.appendChild(kids);
       });
     });
   }
 
   function renderEditor() {
+    project();
     var pane = document.getElementById("ed-editor");
     if (!pane) return;
     clear(pane);
     if (S.narrow) pane.appendChild(el("button", { class: "ed-back", type: "button", id: "ed-back" }, "Back to the list"));
+    if (S.draft && !S.filters.item) {
+      renderDraft(pane);
+      return;
+    }
     var item = itemById(S.filters.item);
     if (!item) {
       pane.appendChild(el("p", { class: "ed-empty" }, "Select a row to edit it."));
@@ -1192,6 +1295,9 @@
     if (staleOnItem) {
       pane.appendChild(el("p", { class: "ed-warn", id: "ed-stale" }, "This edit is stale. The text changed since you wrote it. The current text is shown."));
     }
+    var removed = pendingList().some(function (change) { return change.op === "remove" && change.itemId === item.id; });
+    if (S.notice) pane.appendChild(el("p", { class: "ed-warn" }, S.notice));
+    if (removed) pane.appendChild(el("p", { class: "ed-banner" }, "This entry is marked deleted. Undo it from the pending list to put it back."));
     if (item.note) pane.appendChild(el("p", { class: "ed-banner" }, item.note));
     if (item.definition) pane.appendChild(el("p", { class: "ed-def" }, item.definition));
     item.fields.forEach(function (field, index) {
@@ -1240,6 +1346,8 @@
         pane.appendChild(picker);
       }
     });
+    var actions = renderListActions(item);
+    if (actions) pane.appendChild(actions);
     if (S.result) renderResult(pane);
   }
 
@@ -1529,10 +1637,11 @@
     S.narrow = window.matchMedia("(max-width: 800px)").matches;
     var app = document.getElementById("ed-app");
     if (!app) return;
-    app.classList.toggle("is-detail", S.narrow && !!S.filters.item);
+    app.classList.toggle("is-detail", S.narrow && (!!S.filters.item || !!S.draft));
   }
 
   function paint() {
+    project();
     writeFilters(false);
     renderShell();
     renderList();
@@ -1544,6 +1653,7 @@
   function openItem(id, push) {
     var item = itemById(id);
     if (!item) return;
+    S.draft = null;
     if (S.filters.type !== "all" && item.type !== S.filters.type) S.filters.type = item.type;
     S.filters.item = item.id;
     S.result = null;
@@ -1563,6 +1673,42 @@
     var field = item.fields[Number(input.getAttribute("data-field"))];
     if (!field) return;
     var after = input.value;
+    if (item.synthetic && item.insertId && S.pending[item.insertId]) {
+      var created = S.pending[item.insertId];
+      var previous = cloneJson(created.value);
+      if (field.live) created.value[field.live] = after;
+      else created.value = after;
+      field.value = after;
+      created.label = listLabel(item) || created.label;
+      item.title = created.label;
+      if (previous !== undefined) {
+        pendingList().forEach(function (other) {
+          if (!other.op || other.seq <= created.seq) return;
+          if (listKey(other.repo, other.file, other.path) !== listKey(created.repo, created.file, created.path)) return;
+          if (sameJson(other.before, previous)) other.before = cloneJson(created.value);
+        });
+      }
+      persistPending();
+      var liveErrors = fieldErrors(item, field, after);
+      var liveWarn = root.querySelector('[data-warn="' + input.getAttribute("data-field") + '"]');
+      if (liveWarn) {
+        liveWarn.hidden = !liveErrors.length;
+        liveWarn.textContent = liveErrors[0] || "";
+      }
+      input.setAttribute("aria-invalid", liveErrors.length ? "true" : "false");
+      renderList();
+      renderPending();
+      return;
+    }
+    if (item.listPath && wordingClash(item.repo, item.file, item.listPath)) {
+      input.value = currentValue(item, field);
+      var blocked = root.querySelector('[data-warn="' + input.getAttribute("data-field") + '"]');
+      if (blocked) {
+        blocked.hidden = false;
+        blocked.textContent = "Save the list change and the wording change separately.";
+      }
+      return;
+    }
     var id = changeId(item, field);
     if (after === field.value) delete S.pending[id];
     else {
@@ -1638,11 +1784,13 @@
     renderPending();
     var files = {};
     var slugs = {};
+    Object.keys(S.files).forEach(function (key) {
+      if (S.files[key] && typeof S.files[key].text === "string") files[key] = S.files[key].text;
+    });
     changes.forEach(function (change) {
-      var key = change.repo + ":" + change.file;
-      if (S.files[key]) files[key] = S.files[key].text;
       var item = itemById(change.itemId);
-      if (item && item.company) slugs[item.company] = slugsFor(item.company);
+      var company = (item && item.company) || change.company;
+      if (company) slugs[company] = slugsFor(company);
     });
     var honey = root.querySelector("[name=website]");
     try {
@@ -1655,12 +1803,10 @@
           name: S.name,
           note: S.note,
           changes: changes.map(function (change) {
-            return {
+            var out = {
               repo: change.repo,
               file: change.file,
-              path: change.path,
-              before: change.before,
-              after: change.after,
+              path: change.path || [],
               label: change.label,
               field: change.field,
               company: change.company || "",
@@ -1669,6 +1815,18 @@
               principleName: change.principleName || "",
               shared: !!change.shared,
             };
+            if (change.op) {
+              out.op = change.op;
+              out.seq = change.seq;
+              if (typeof change.index === "number") out.index = change.index;
+              if (typeof change.to === "number") out.to = change.to;
+              if (change.value !== undefined) out.value = change.value;
+              if (change.before !== undefined) out.before = change.before;
+              return out;
+            }
+            out.before = change.before;
+            out.after = change.after;
+            return out;
           }),
           files: files,
           slugs: slugs,
@@ -1757,8 +1915,47 @@
       openItem(itemBtn.getAttribute("data-item"), true);
       return;
     }
+    var deleter = event.target.closest("[data-delete-item]");
+    if (deleter) {
+      deleteListed(itemById(deleter.getAttribute("data-delete-item")));
+      paint();
+      return;
+    }
+    var add = event.target.closest("[data-add]");
+    if (add) {
+      var spec = S.addButtons[Number(add.getAttribute("data-add"))];
+      if (spec) startDraft(spec);
+      paint();
+      return;
+    }
+    var act = event.target.closest("[data-act]");
+    if (act) {
+      var current = itemById(S.filters.item);
+      var name = act.getAttribute("data-act");
+      if (name === "add" && current) startDraft(listSpecForItem(current));
+      else if (name === "delete" && current) deleteListed(current);
+      else if (name === "up" && current) moveListed(current, -1);
+      else if (name === "down" && current) moveListed(current, 1);
+      else if (name === "delete-facet" && current) deleteFacetById(facetIdOf(current));
+      else if (name === "delete-teaching" && current) deleteTeachingFile(current);
+      paint();
+      return;
+    }
+    if (event.target.id === "ed-draft-add") {
+      commitDraft();
+      paint();
+      return;
+    }
+    if (event.target.id === "ed-draft-cancel") {
+      S.draft = null;
+      S.notice = "";
+      paint();
+      return;
+    }
     if (event.target.id === "ed-back") {
       S.filters.item = "";
+      S.draft = null;
+      S.notice = "";
       writeFilters(true);
       renderList();
       renderEditor();
@@ -1768,7 +1965,7 @@
     }
     var undo = event.target.closest("[data-undo]");
     if (undo) {
-      delete S.pending[undo.getAttribute("data-undo")];
+      undoChange(undo.getAttribute("data-undo"));
       persistPending();
       finishPending();
       renderEditor();
@@ -1821,6 +2018,10 @@
       S.note = event.target.value;
       return;
     }
+    if (event.target.hasAttribute("data-draft")) {
+      onDraftInput(event.target);
+      return;
+    }
     if (event.target.hasAttribute("data-field")) onField(event.target);
   });
 
@@ -1831,6 +2032,19 @@
       S.filters.group = group;
       writeFilters(false);
       renderList();
+      return;
+    }
+    if (event.target.hasAttribute("data-draft")) {
+      onDraftInput(event.target);
+      return;
+    }
+    if (event.target.hasAttribute("data-facet-principle") && S.draft) {
+      var picked = event.target.getAttribute("data-facet-principle");
+      if (event.target.checked) {
+        if (S.draft.principles.indexOf(picked) === -1) S.draft.principles.push(picked);
+      } else {
+        S.draft.principles = S.draft.principles.filter(function (value) { return value !== picked; });
+      }
       return;
     }
     if (event.target.id === "ed-dry") {
@@ -1909,12 +2123,1614 @@
   });
   window.addEventListener("resize", applyNarrow);
 
+  function listKey(repo, file, path) {
+    return repo + "\u0000" + file + "\u0000" + JSON.stringify(path || []);
+  }
+
+  function cloneJson(value) {
+    return value == null ? value : JSON.parse(JSON.stringify(value));
+  }
+
+  function sameJson(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  function slugify(text) {
+    return String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  }
+
+  function addLabel(kind) {
+    if (kind === "blog") return "Add a further reading link";
+    if (kind === "deepen") return "Add a concrete question";
+    if (kind === "question") return "Add a BIQ question";
+    if (kind === "why") return "Add a why paragraph";
+    if (kind === "example") return "Add an example";
+    if (kind === "related") return "Add a related note";
+    if (kind === "row" || kind === "facetRow") return "Add a calibration row";
+    if (kind === "teaching") return "Add teaching";
+    if (kind === "facet") return "Add a facet";
+    return "Add";
+  }
+
+  function unpublished(companyId) {
+    return companyId === "generic";
+  }
+
+  function dig(root, path) {
+    var cur = root;
+    for (var i = 0; i < path.length; i++) {
+      var step = path[i];
+      if (cur == null) return null;
+      if (typeof step === "string" || typeof step === "number") {
+        cur = cur[step];
+        continue;
+      }
+      if (!step || typeof step !== "object" || !Array.isArray(cur)) return null;
+      var keys = Object.keys(step);
+      var found = null;
+      for (var n = 0; n < cur.length; n++) {
+        var ok = cur[n] && typeof cur[n] === "object";
+        for (var k = 0; ok && k < keys.length; k++) {
+          if (cur[n][keys[k]] !== step[keys[k]]) ok = false;
+        }
+        if (ok) {
+          found = cur[n];
+          break;
+        }
+      }
+      cur = found;
+    }
+    return cur;
+  }
+
+  function indexIn(arr, step) {
+    if (!Array.isArray(arr)) return -1;
+    if (typeof step === "number") return step;
+    if (step && step.id != null) {
+      for (var i = 0; i < arr.length; i++) if (arr[i] && arr[i].id === step.id) return i;
+    }
+    return -1;
+  }
+
+  function pushList(spec) {
+    if (!spec || !spec.key || S.listByKey[spec.key]) return;
+    S.listByKey[spec.key] = spec;
+    S.lists.push(spec);
+  }
+
+  function assignList(item, path, index, kind, type, value) {
+    if (index < 0 || value == null) return;
+    item.listPath = path;
+    item.listIndex = index;
+    item.listKind = kind;
+    item.listValue = value;
+    var tag = (item.tags && item.tags[0]) || {};
+    var companyId = item.company || tag.companyId || "";
+    var principleId = tag.principleId || 0;
+    if (kind === "question" && path.length >= 4) {
+      companyId = path[1] && path[1].id ? path[1].id : companyId;
+      principleId = path[3] && path[3].id ? path[3].id : principleId;
+    }
+    var meta = S.byId[principleId];
+    pushList({
+      key: listKey(item.repo, item.file, path),
+      repo: item.repo,
+      file: item.file,
+      path: path,
+      kind: kind,
+      type: type,
+      label: addLabel(kind),
+      companyId: companyId,
+      principleId: principleId,
+      companyName: (meta && meta.companyName) || tag.companyName || "",
+      principleName: (meta && meta.name) || item.principleName || tag.principleName || "",
+      companyIndex: meta ? meta.companyIndex : (tag.companyIndex == null ? 99 : tag.companyIndex),
+      sort: meta ? meta.sort : (tag.sort == null ? 999 : tag.sort),
+    });
+  }
+
+  function tagItemList(item) {
+    if (!item.fields || !item.fields.length) return;
+    var path = item.fields[0].path;
+    var stored = S.files[item.repo + ":" + item.file];
+    if (!stored) return;
+    if (item.kind === "reading" && path[0] === "blog" && typeof path[1] === "number") {
+      assignList(item, ["blog"], path[1], "blog", "reading", dig(stored.json, ["blog", path[1]]));
+    } else if (item.kind === "concrete" && path[0] === "deepen") {
+      assignList(item, ["deepen"], path[1], "deepen", "concrete", dig(stored.json, ["deepen", path[1]]));
+    } else if (item.kind === "question") {
+      var qPath = path.slice(0, 5);
+      var questions = dig(stored.json, qPath);
+      var qIndex = indexIn(questions, path[5]);
+      assignList(item, qPath, qIndex, "question", "questions", questions && questions[qIndex]);
+    } else if (item.kind === "facet") {
+      var fPath = path.slice(0, 3);
+      var rows = dig(stored.json, fPath);
+      var fIndex = indexIn(rows, path[3]);
+      assignList(item, fPath, fIndex, "facetRow", "facets", rows && rows[fIndex]);
+    } else if (item.kind === "row") {
+      var recordRows = dig(stored.json, ["rows"]);
+      var rIndex = indexIn(recordRows, path[1]);
+      assignList(item, ["rows"], rIndex, "row", "facets", recordRows && recordRows[rIndex]);
+    } else if (item.kind === "teaching" && path[0] === "why") {
+      assignList(item, ["why"], path[1], "why", "teaching", dig(stored.json, ["why", path[1]]));
+    } else if (item.kind === "teaching" && path[0] === "examples") {
+      assignList(item, ["examples"], path[1], "example", "teaching", dig(stored.json, ["examples", path[1]]));
+    } else if (item.kind === "teaching" && path[0] === "related") {
+      assignList(item, ["related"], path[1], "related", "teaching", dig(stored.json, ["related", path[1]]));
+    }
+  }
+
+  function registerQuestionLists() {
+    var bank = S.files["biq:data/questions.json"];
+    if (!bank) return;
+    (bank.json.companies || []).forEach(function (co) {
+      (co.principles || []).forEach(function (pr) {
+        var path = ["companies", { id: co.id }, "principles", { id: pr.id }, "questions"];
+        var meta = S.byId[pr.id] || {};
+        pushList({
+          key: listKey("biq", "data/questions.json", path),
+          repo: "biq",
+          file: "data/questions.json",
+          path: path,
+          kind: "question",
+          type: "questions",
+          label: addLabel("question"),
+          companyId: co.id,
+          principleId: pr.id,
+          companyName: co.name,
+          principleName: pr.name,
+          companyIndex: meta.companyIndex == null ? 99 : meta.companyIndex,
+          sort: meta.sort == null ? 999 : meta.sort,
+        });
+      });
+    });
+  }
+
+  function registerRowLists() {
+    S.companies.forEach(function (co) {
+      (co.principles || []).forEach(function (pr) {
+        var file = pr.file;
+        if (!S.files["principles:" + file]) return;
+        var path = ["rows"];
+        var meta = S.byId[pr.id] || {};
+        pushList({
+          key: listKey("principles", file, path),
+          repo: "principles",
+          file: file,
+          path: path,
+          kind: "row",
+          type: "facets",
+          label: addLabel("row"),
+          companyId: co.id,
+          principleId: pr.id,
+          companyName: co.name,
+          principleName: pr.name,
+          companyIndex: meta.companyIndex == null ? 99 : meta.companyIndex,
+          sort: meta.sort == null ? 999 : meta.sort,
+        });
+      });
+    });
+  }
+
+  function finishLists() {
+    S.lists = [];
+    S.listByKey = Object.create(null);
+    S.teachingAdds = [];
+    S.items.forEach(tagItemList);
+    registerQuestionLists();
+    registerRowLists();
+    S.companies.forEach(function (co) {
+      (co.principles || []).forEach(function (pr) {
+        var file = "data/teaching/" + co.id + "/" + pr.slug + ".json";
+        if (S.files["principles:" + file]) return;
+        var meta = S.byId[pr.id] || {};
+        S.teachingAdds.push({
+          mode: "teaching",
+          kind: "teaching",
+          type: "teaching",
+          label: "Add teaching",
+          companyId: co.id,
+          principleId: pr.id,
+          companyName: co.name,
+          principleName: pr.name,
+          companyIndex: meta.companyIndex == null ? 99 : meta.companyIndex,
+          sort: meta.sort == null ? 999 : meta.sort,
+          slug: pr.slug,
+          file: file,
+          repo: "principles",
+        });
+      });
+    });
+    S.base = S.items.slice();
+  }
+
+  function compareItems(a, b) {
+    var ta = a.tags[0] || { companyIndex: 99, sort: 999 };
+    var tb = b.tags[0] || { companyIndex: 99, sort: 999 };
+    if (ta.companyIndex !== tb.companyIndex) return ta.companyIndex - tb.companyIndex;
+    if (ta.sort !== tb.sort) return ta.sort - tb.sort;
+    if (a.order !== b.order) return a.order - b.order;
+    return String(a.title).localeCompare(String(b.title));
+  }
+
+  function listOps(repo, file, path) {
+    var key = listKey(repo, file, path);
+    return pendingList().filter(function (change) {
+      return change.op && change.op !== "create" && change.op !== "delete" && listKey(change.repo, change.file, change.path) === key;
+    }).sort(function (a, b) { return (a.seq || 0) - (b.seq || 0); });
+  }
+
+  function nextSeq() {
+    var n = 1;
+    pendingList().forEach(function (change) {
+      if ((change.seq || 0) >= n) n = change.seq + 1;
+    });
+    return n;
+  }
+
+  function replayValues(repo, file, path, original) {
+    var arr = (original || []).slice();
+    listOps(repo, file, path).forEach(function (op) {
+      if (op.stale) return;
+      if (op.op === "remove") {
+        if (op.index >= 0 && op.index < arr.length) arr.splice(op.index, 1);
+      } else if (op.op === "insert") {
+        var at = op.index;
+        if (at < 0) at = 0;
+        if (at > arr.length) at = arr.length;
+        arr.splice(at, 0, op.value);
+      } else if (op.op === "move") {
+        if (op.index < 0 || op.index >= arr.length) return;
+        var moved = arr.splice(op.index, 1)[0];
+        var to = op.to;
+        if (to < 0) to = 0;
+        if (to > arr.length) to = arr.length;
+        arr.splice(to, 0, moved);
+      }
+    });
+    return arr;
+  }
+
+  function syntheticItem(op) {
+    var value = op.value;
+    var title = op.label || "Added";
+    if (op.listKind === "blog") title = value && value.title || title;
+    else if (op.listKind === "deepen" || op.listKind === "why") title = String(value || title);
+    else if (op.listKind === "question") title = value && value.text || title;
+    else if (op.listKind === "example") title = value && value.title || title;
+    else if (op.listKind === "related") title = "Related: " + ((value && value.id) || "");
+    else if (op.listKind === "row" || op.listKind === "facetRow") title = value && value.situation || title;
+    else if (op.listKind === "facet") title = value && (value.label || value.id) || title;
+    var item = baseItem({
+      id: "pending:" + op.id,
+      synthetic: true,
+      insertId: op.id,
+      type: op.type || "all",
+      kind: op.itemKind || (op.listKind === "deepen" ? "concrete" : op.listKind === "blog" ? "reading" : op.listKind === "question" ? "question" : op.listKind === "facet" ? "facet" : "teaching"),
+      title: title,
+      text: typeof value === "string" ? value : title,
+      kicker: op.kicker || addLabel(op.listKind).replace(/^Add a |^Add an |^Add /, ""),
+      tags: op.tags || [],
+      company: op.company,
+      principleName: op.principleName,
+      repo: op.repo,
+      file: op.file,
+      order: 5000 + (op.seq || 0),
+      listPath: op.path,
+      listKind: op.listKind,
+      listValue: value,
+    });
+    if (op.listKind === "blog") {
+      addField(item, "title", "Title", ["blog", op.index, "title"], value.title, { allowEnDash: true, live: "title" });
+      addField(item, "url", "URL", ["blog", op.index, "url"], value.url, { url: true, live: "url" });
+      addField(item, "note", "Note", ["blog", op.index, "note"], value.note, { multiline: true, tokens: true, live: "note" });
+    } else if (op.listKind === "deepen") {
+      addField(item, "deepen", "Concrete question", ["deepen", op.index], value, { multiline: true, tokens: true, questionMark: true, live: "" });
+    } else if (op.listKind === "why") {
+      addField(item, "why", "Why", ["why", op.index], value, { multiline: true, tokens: true, live: "" });
+    } else if (op.listKind === "question") {
+      addField(item, "text", "BIQ question", op.path.concat([op.index, "text"]), value.text, { multiline: true, live: "text" });
+    } else if (op.listKind === "example") {
+      addField(item, "title", "Title", ["examples", op.index, "title"], value.title, { live: "title" });
+      addField(item, "body", "Example", ["examples", op.index, "body"], value.body, { multiline: true, tokens: true, live: "body" });
+    } else if (op.listKind === "related") {
+      addField(item, "note", "Related", ["related", op.index, "note"], value.note, { multiline: true, tokens: true, live: "note" });
+    } else if (op.listKind === "row" || op.listKind === "facetRow") {
+      ["situation", "under", "justRight", "over"].forEach(function (key) {
+        var label = key === "justRight" ? "Just right" : key.charAt(0).toUpperCase() + key.slice(1);
+        addField(item, key, label, op.path.concat([op.index, key]), value[key], { sentences: key !== "situation", multiline: key !== "situation", live: key });
+      });
+    }
+    return item;
+  }
+
+  function syntheticFile(change) {
+    return baseItem({
+      id: "pending:" + change.id,
+      synthetic: true,
+      insertId: change.id,
+      type: "teaching",
+      kind: "teaching",
+      title: change.label || "New teaching",
+      text: "This teaching record is waiting in the batch.",
+      kicker: "Teaching",
+      tags: change.tags || [],
+      company: change.company,
+      principleName: change.principleName,
+      repo: change.repo,
+      file: change.file,
+      order: 0,
+      note: "This teaching record is added as a whole. Save it, then edit the prose.",
+    });
+  }
+
+  function replayItems(repo, file, path) {
+    var key = listKey(repo, file, path);
+    var arr = (S.base || []).filter(function (item) {
+      return item.listPath && listKey(item.repo, item.file, item.listPath) === key;
+    }).sort(function (a, b) { return a.listIndex - b.listIndex; });
+    listOps(repo, file, path).forEach(function (op) {
+      if (op.stale) return;
+      if (op.op === "remove") {
+        if (op.index >= 0 && op.index < arr.length) arr.splice(op.index, 1);
+      } else if (op.op === "insert") {
+        var at = op.index < 0 ? 0 : op.index;
+        if (at > arr.length) at = arr.length;
+        arr.splice(at, 0, syntheticItem(op));
+      } else if (op.op === "move") {
+        if (op.index < 0 || op.index >= arr.length) return;
+        var moved = arr.splice(op.index, 1)[0];
+        var to = op.to < 0 ? 0 : op.to;
+        if (to > arr.length) to = arr.length;
+        arr.splice(to, 0, moved);
+      }
+    });
+    return arr;
+  }
+
+  function project() {
+    if (!S.base) return;
+    var hidden = {};
+    pendingList().forEach(function (change) {
+      if (change.op === "delete") hidden[change.repo + ":" + change.file] = true;
+    });
+    var grouped = Object.create(null);
+    var order = [];
+    var loose = [];
+    S.base.forEach(function (item) {
+      if (hidden[item.repo + ":" + item.file]) return;
+      if (!item.listPath) {
+        loose.push(item);
+        return;
+      }
+      var key = listKey(item.repo, item.file, item.listPath);
+      if (!grouped[key]) {
+        grouped[key] = true;
+        order.push({ repo: item.repo, file: item.file, path: item.listPath });
+      }
+    });
+    pendingList().forEach(function (change) {
+      if (change.op !== "insert" && change.op !== "move") return;
+      var key = listKey(change.repo, change.file, change.path);
+      if (grouped[key]) return;
+      grouped[key] = true;
+      order.push({ repo: change.repo, file: change.file, path: change.path });
+    });
+    var out = loose.slice();
+    order.forEach(function (entry) {
+      replayItems(entry.repo, entry.file, entry.path).forEach(function (item) { out.push(item); });
+    });
+    pendingList().forEach(function (change) {
+      if (change.op === "create") out.push(syntheticFile(change));
+    });
+    out.sort(compareItems);
+    S.items = out;
+  }
+
+  function currentIndex(item) {
+    if (!item || !item.listPath) return -1;
+    var arr = replayItems(item.repo, item.file, item.listPath);
+    for (var i = 0; i < arr.length; i++) if (arr[i].id === item.id) return i;
+    return -1;
+  }
+
+  function lengthLimit(kind, next, companyId) {
+    if (kind === "deepen" && (next < 6 || next > 12)) return "Concrete questions must stay between 6 and 12.";
+    if (kind === "why" && (next < 3 || next > 6)) return "Why must stay between 3 and 6 paragraphs.";
+    if (kind === "example" && (next < 2 || next > 4)) return "Examples must stay between 2 and 4.";
+    if (kind === "related" && next < 2) return "Related needs at least two principles.";
+    if (kind === "blog" && next < 1) return "Further reading cannot be empty.";
+    if (kind === "row" && next < 1 && !unpublished(companyId)) return "This principle needs at least one calibration row.";
+    if (kind === "facetRow" && next < 1) return "A facet needs at least one row.";
+    return "";
+  }
+
+  function companyExamples(companyId) {
+    var bank = S.files["biq:data/questions.json"];
+    if (!bank) return true;
+    var co = (bank.json.companies || []).filter(function (item) { return item.id === companyId; })[0];
+    return !co || co.examples !== false;
+  }
+
+  function essayProblem(url) {
+    var cat = window.KINDEL_ESSAY_CATALOG;
+    var match = /^https:\/\/blog\.kindel\.com\/\d{4}\/\d{2}\/\d{2}\/([a-z0-9-]+)\/?$/.exec(String(url || "").trim());
+    if (!match || !cat || !cat.bySlug || !cat.bySlug[match[1]]) return "";
+    return "This essay has to use https://kindel.com/essays/" + match[1] + "/.";
+  }
+
+  function dashProblem(text, allowEnDash) {
+    return checkText(text, { allowEnDash: !!allowEnDash }).filter(function (error) {
+      return error.indexOf("dash") !== -1 || error.indexOf("---") !== -1;
+    });
+  }
+
+  function wordingClash(repo, file, listPath) {
+    return pendingList().some(function (change) {
+      if (change.op || change.repo !== repo || change.file !== file) return false;
+      if (!Array.isArray(change.path) || change.path.length < listPath.length) return false;
+      for (var i = 0; i < listPath.length; i++) {
+        if (JSON.stringify(change.path[i]) !== JSON.stringify(listPath[i])) return false;
+      }
+      return true;
+    });
+  }
+
+  function listClash(item) {
+    if (!item || !item.listPath) return false;
+    return wordingClash(item.repo, item.file, item.listPath);
+  }
+
+  function queueOp(spec) {
+    var seq = spec.seq || nextSeq();
+    var id = listKey(spec.repo, spec.file, spec.path || []) + "\u0000" + spec.op + "\u0000" + seq;
+    var principleName = spec.principleName || spec.principle || "";
+    S.pending[id] = {
+      id: id,
+      op: spec.op,
+      seq: seq,
+      itemId: spec.itemId || ("pending:" + id),
+      label: spec.label || "Item",
+      field: spec.field || (spec.op === "insert" || spec.op === "create" ? "added" : spec.op === "move" ? "moved" : "deleted"),
+      repo: spec.repo,
+      file: spec.file,
+      path: spec.path || [],
+      index: spec.index,
+      to: spec.to,
+      value: spec.value,
+      before: spec.before,
+      company: spec.company || "",
+      companyName: spec.companyName || "",
+      principle: principleName,
+      principleName: principleName,
+      shared: !!spec.shared,
+      sha: spec.sha || "",
+      stale: false,
+      listKind: spec.listKind || "",
+      type: spec.type || "",
+      itemKind: spec.itemKind || "",
+      kicker: spec.kicker || "",
+      tags: spec.tags || [],
+      batch: spec.batch || "",
+    };
+    return S.pending[id];
+  }
+
+  function afterStruct() {
+    S.notice = "";
+    persistPending();
+    project();
+  }
+
+  function undoChange(id) {
+    var change = S.pending[id];
+    if (!change) return;
+    if (change.batch) {
+      var batch = change.batch;
+      Object.keys(S.pending).forEach(function (key) {
+        if (S.pending[key].batch === batch) delete S.pending[key];
+      });
+      return;
+    }
+    if (change.op) {
+      var key = listKey(change.repo, change.file, change.path || []);
+      var seq = change.seq || 0;
+      Object.keys(S.pending).forEach(function (pid) {
+        var other = S.pending[pid];
+        if (!other || !other.op || other.batch) return;
+        if (listKey(other.repo, other.file, other.path || []) !== key) return;
+        if ((other.seq || 0) >= seq) delete S.pending[pid];
+      });
+      return;
+    }
+    delete S.pending[id];
+  }
+
+  function metaFrom(spec, item) {
+    var tag = item && item.tags && item.tags[0];
+    return {
+      company: (item && item.company) || spec.companyId || "",
+      companyName: spec.companyName || (tag && tag.companyName) || "",
+      principleName: spec.principleName || (tag && tag.principleName) || "",
+      shared: !!(item && item.shared),
+      tags: item && item.tags ? item.tags : (spec.principleId ? [{
+        companyId: spec.companyId,
+        companyName: spec.companyName,
+        companyIndex: spec.companyIndex == null ? 99 : spec.companyIndex,
+        principleId: spec.principleId,
+        principleName: spec.principleName,
+        sort: spec.sort == null ? 999 : spec.sort,
+      }] : []),
+    };
+  }
+
+  function originalArray(repo, file, path) {
+    var stored = S.files[repo + ":" + file];
+    var value = stored ? dig(stored.json, path) : null;
+    return Array.isArray(value) ? value : [];
+  }
+
+  function queueInsert(spec, value, label) {
+    if (wordingClash(spec.repo, spec.file, spec.path)) {
+      S.notice = "Save the list change and the wording change separately.";
+      return null;
+    }
+    var current = replayValues(spec.repo, spec.file, spec.path, originalArray(spec.repo, spec.file, spec.path));
+    var next = current.length + 1;
+    var limit = lengthLimit(spec.kind, next, spec.companyId);
+    if (limit) {
+      S.notice = limit;
+      return null;
+    }
+    if (spec.kind === "question" && companyExamples(spec.companyId)) {
+      var coName = spec.companyName || spec.companyId;
+      S.notice = coName + " keeps an example pack for every question. Add it on a company without packs.";
+      return null;
+    }
+    var home = metaFrom(spec, null);
+    var change = queueOp({
+      op: "insert",
+      repo: spec.repo,
+      file: spec.file,
+      path: spec.path,
+      index: current.length,
+      value: value,
+      label: label,
+      field: "added",
+      listKind: spec.kind,
+      type: spec.type,
+      itemKind: spec.kind === "deepen" ? "concrete" : spec.kind === "blog" ? "reading" : spec.kind === "example" || spec.kind === "why" || spec.kind === "related" ? "teaching" : spec.kind === "facetRow" || spec.kind === "row" ? "facet" : spec.kind,
+      kicker: addLabel(spec.kind).replace(/^Add /, ""),
+      company: home.company,
+      companyName: home.companyName,
+      principleName: home.principleName,
+      shared: spec.kind === "facetRow",
+      tags: home.tags,
+    });
+    afterStruct();
+    return change;
+  }
+
+  function deleteListed(item) {
+    if (!item) return;
+    if (item.synthetic && item.insertId) {
+      undoChange(item.insertId);
+      afterStruct();
+      if (S.filters.item === item.id) S.filters.item = "";
+      return;
+    }
+    if (!item.listPath) return;
+    if (listClash(item)) {
+      S.notice = "Save the list change and the wording change separately.";
+      return;
+    }
+    var index = currentIndex(item);
+    if (index < 0) return;
+    var current = replayValues(item.repo, item.file, item.listPath, originalArray(item.repo, item.file, item.listPath));
+    var limit = lengthLimit(item.listKind, current.length - 1, item.company);
+    if (limit) {
+      S.notice = limit;
+      return;
+    }
+    if (item.listKind === "facetRow") {
+      var left = 0;
+      current.forEach(function (row, at) {
+        if (at === index) return;
+        if (row && row.words === "generated" && row.under && !Object.prototype.hasOwnProperty.call(row, "principle")) left++;
+      });
+      if (!left) {
+        S.notice = "This facet needs a generated calibration row so every principle keeps a table.";
+        return;
+      }
+    }
+    if (item.listKind === "question") {
+      var loss = questionLoss(item, index);
+      if (loss) {
+        S.notice = loss;
+        return;
+      }
+    }
+    var home = metaFrom({}, item);
+    queueOp({
+      op: "remove",
+      repo: item.repo,
+      file: item.file,
+      path: item.listPath,
+      index: index,
+      before: current[index],
+      label: listLabel(item),
+      field: "deleted",
+      listKind: item.listKind,
+      type: item.type,
+      itemId: item.id,
+      company: home.company,
+      companyName: home.companyName,
+      principleName: home.principleName,
+      shared: !!item.shared,
+      tags: item.tags,
+    });
+    afterStruct();
+  }
+
+  function moveListed(item, dir) {
+    if (!item || !item.listPath) return;
+    if (item.synthetic) {
+      S.notice = "Save or undo this new entry before moving it.";
+      return;
+    }
+    if (listClash(item)) {
+      S.notice = "Save the list change and the wording change separately.";
+      return;
+    }
+    var index = currentIndex(item);
+    var to = index + dir;
+    var current = replayValues(item.repo, item.file, item.listPath, originalArray(item.repo, item.file, item.listPath));
+    if (index < 0 || to < 0 || to >= current.length) return;
+    var home = metaFrom({}, item);
+    queueOp({
+      op: "move",
+      repo: item.repo,
+      file: item.file,
+      path: item.listPath,
+      index: index,
+      to: to,
+      before: current[index],
+      label: listLabel(item),
+      field: "moved",
+      listKind: item.listKind,
+      type: item.type,
+      itemId: item.id,
+      company: home.company,
+      companyName: home.companyName,
+      principleName: home.principleName,
+      shared: !!item.shared,
+      tags: item.tags,
+    });
+    afterStruct();
+  }
+
+  function questionLoss(item, index) {
+    var bank = S.files["biq:data/questions.json"];
+    if (!bank) return "The question bank is not loaded, so this save cannot be checked.";
+    var doc = cloneJson(bank.json);
+    var arr = dig(doc, item.listPath);
+    if (!Array.isArray(arr) || index < 0 || index >= arr.length) return "";
+    arr.splice(index, 1);
+    return visibleDrop(bank.json, doc);
+  }
+
+  function donorsOf(doc, skipFacet) {
+    var donors = Object.create(null);
+    (doc.companies || []).forEach(function (co) {
+      (co.principles || []).forEach(function (pr) {
+        var count = pr && Array.isArray(pr.questions) ? pr.questions.length : 0;
+        if (!count) return;
+        (pr.facets || []).forEach(function (facetId) {
+          if (facetId === skipFacet) return;
+          if (!donors[facetId]) donors[facetId] = count;
+        });
+      });
+    });
+    return donors;
+  }
+
+  function visibleOf(pr, donors) {
+    var own = pr && Array.isArray(pr.questions) ? pr.questions.length : 0;
+    if (own) return own;
+    var facets = (pr && pr.facets) || [];
+    for (var i = 0; i < facets.length; i++) if (donors[facets[i]]) return donors[facets[i]];
+    return 0;
+  }
+
+  function visibleDrop(before, after) {
+    var beforeDonors = donorsOf(before);
+    var afterDonors = donorsOf(after);
+    var name = "";
+    (before.companies || []).forEach(function (co) {
+      (co.principles || []).forEach(function (pr) {
+        if (name) return;
+        var was = visibleOf(pr, beforeDonors);
+        var nextPr = null;
+        (after.companies || []).forEach(function (aco) {
+          if (aco.id !== co.id) return;
+          (aco.principles || []).forEach(function (apr) {
+            if (apr.id === pr.id) nextPr = apr;
+          });
+        });
+        var now = visibleOf(nextPr, afterDonors);
+        if (was > 0 && now === 0) name = (pr.name || co.name) + " would have no BIQ question.";
+      });
+    });
+    return name;
+  }
+
+  function generatedMap(skipId) {
+    var set = Object.create(null);
+    var doc = S.files["principles:data/facets.json"];
+    ((doc && doc.json.facets) || []).forEach(function (facet) {
+      if (!facet || facet.id === skipId) return;
+      (facet.rows || []).forEach(function (row) {
+        if (row && row.words === "generated" && row.under && !Object.prototype.hasOwnProperty.call(row, "principle")) set[facet.id] = true;
+      });
+    });
+    return set;
+  }
+
+  function facetCoverageProblem(skipId) {
+    var now = generatedMap(null);
+    var next = generatedMap(skipId);
+    var lost = [];
+    S.companies.forEach(function (co) {
+      (co.principles || []).forEach(function (pr) {
+        var had = (pr.facets || []).some(function (id) { return now[id]; });
+        var still = (pr.facets || []).filter(function (id) { return id !== skipId; }).some(function (id) { return next[id]; });
+        if (had && !still) lost.push(pr.name + " (" + co.name + ")");
+      });
+    });
+    if (!lost.length) return "";
+    return "These principles would have no calibration table: " + lost.join(", ") + ".";
+  }
+
+  function facetQuestionProblem(skipId) {
+    var bank = S.files["biq:data/questions.json"];
+    if (!bank) return "The question bank is not loaded, so this save cannot be checked.";
+    var before = bank.json;
+    var after = cloneJson(before);
+    (after.companies || []).forEach(function (co) {
+      (co.principles || []).forEach(function (pr) {
+        pr.facets = (pr.facets || []).filter(function (id) { return id !== skipId; });
+      });
+    });
+    var beforeDonors = donorsOf(before);
+    var afterDonors = donorsOf(after, skipId);
+    var lost = [];
+    (before.companies || []).forEach(function (co) {
+      (co.principles || []).forEach(function (pr) {
+        var was = visibleOf(pr, beforeDonors);
+        var nextPr = null;
+        (after.companies || []).forEach(function (aco) {
+          if (aco.id !== co.id) return;
+          (aco.principles || []).forEach(function (apr) { if (apr.id === pr.id) nextPr = apr; });
+        });
+        if (was > 0 && visibleOf(nextPr, afterDonors) === 0) lost.push((pr.name || "") + " (" + co.name + ")");
+      });
+    });
+    if (!lost.length) return "";
+    return "These principles would have no BIQ question: " + lost.join(", ") + ".";
+  }
+
+  function removeSlug(repo, file, path, slug, batch, label) {
+    var current = replayValues(repo, file, path, originalArray(repo, file, path));
+    var index = current.indexOf(slug);
+    if (index === -1) return false;
+    queueOp({
+      op: "remove",
+      repo: repo,
+      file: file,
+      path: path,
+      index: index,
+      before: current[index],
+      label: label,
+      field: "deleted",
+      listKind: "facetLink",
+      batch: batch,
+      company: "",
+      principleName: label,
+    });
+    return true;
+  }
+
+  function insertSlug(repo, file, path, slug, batch, label, companyId, principleName) {
+    var current = replayValues(repo, file, path, originalArray(repo, file, path));
+    if (current.indexOf(slug) !== -1) return;
+    var index = current.length;
+    for (var i = 0; i < current.length; i++) {
+      if (String(current[i]) > slug) {
+        index = i;
+        break;
+      }
+    }
+    queueOp({
+      op: "insert",
+      repo: repo,
+      file: file,
+      path: path,
+      index: index,
+      value: slug,
+      label: label,
+      field: "added",
+      listKind: "facetLink",
+      batch: batch,
+      company: companyId || "",
+      principleName: principleName || "",
+    });
+  }
+
+  function deleteFacetById(facetId) {
+    if (!S.maps.length) {
+      S.notice = S.mapsNote || "Derivation maps are not loaded, so a facet change cannot be checked.";
+      return;
+    }
+    var doc = S.files["principles:data/facets.json"];
+    if (!doc) return;
+    var facets = replayValues("principles", "data/facets.json", ["facets"], doc.json.facets || []);
+    var index = -1;
+    for (var i = 0; i < facets.length; i++) if (facets[i] && facets[i].id === facetId) index = i;
+    if (index === -1) return;
+    var coverage = facetCoverageProblem(facetId);
+    if (coverage) {
+      S.notice = coverage;
+      return;
+    }
+    var questions = facetQuestionProblem(facetId);
+    if (questions) {
+      S.notice = questions;
+      return;
+    }
+    var batch = "facet:" + nextSeq();
+    var label = facets[index].label || facetId;
+    queueOp({
+      op: "remove",
+      repo: "principles",
+      file: "data/facets.json",
+      path: ["facets"],
+      index: index,
+      before: facets[index],
+      label: label,
+      field: "deleted",
+      listKind: "facet",
+      type: "facets",
+      batch: batch,
+      shared: true,
+      principleName: label,
+    });
+    function scan(repo, file) {
+      var stored = S.files[repo + ":" + file];
+      if (!stored) return;
+      (stored.json.companies || []).forEach(function (co) {
+        (co.principles || []).forEach(function (pr) {
+          if ((pr.facets || []).indexOf(facetId) === -1) return;
+          removeSlug(repo, file, ["companies", { id: co.id }, "principles", { id: pr.id }, "facets"], facetId, batch, label);
+        });
+      });
+    }
+    scan("principles", "data/index.json");
+    scan("biq", "data/questions.json");
+    S.maps.forEach(function (map) {
+      (map.json.pairs || []).forEach(function (pair) {
+        if (!pair || typeof pair.sourceId !== "number" || !Array.isArray(pair.facets)) return;
+        if (pair.facets.indexOf(facetId) === -1) return;
+        removeSlug("principles", map.file, ["pairs", { sourceId: pair.sourceId }, "facets"], facetId, batch, label);
+      });
+    });
+    afterStruct();
+  }
+
+  function linkFacet(facetId, principleIds, batch, label) {
+    principleIds.forEach(function (pid) {
+      var meta = S.byId[pid];
+      if (!meta) return;
+      var path = ["companies", { id: meta.companyId }, "principles", { id: pid }, "facets"];
+      insertSlug("principles", "data/index.json", path, facetId, batch, label, meta.companyId, meta.name);
+      insertSlug("biq", "data/questions.json", path, facetId, batch, label, meta.companyId, meta.name);
+      S.maps.forEach(function (map) {
+        (map.json.pairs || []).forEach(function (pair) {
+          if (!pair || pair.sourceId !== pid || !Array.isArray(pair.facets)) return;
+          insertSlug("principles", map.file, ["pairs", { sourceId: pid }, "facets"], facetId, batch, label, meta.companyId, meta.name);
+        });
+      });
+    });
+  }
+
+  function recordRows(principleId) {
+    var meta = S.byId[principleId];
+    if (!meta) return [];
+    var stored = S.files["principles:" + meta.file];
+    if (!stored || !Array.isArray(stored.json.rows)) return [];
+    return stored.json.rows.filter(function (row) { return row && row.id; });
+  }
+
+  function commitFacet(draft) {
+    if (!S.maps.length) return "Derivation maps are not loaded, so a facet change cannot be checked.";
+    var label = String(draft.fields.facetLabel || "").trim();
+    var id = slugify(label);
+    if (!id || slugify(label) !== id) return "A facet id has to be the slug of its label.";
+    var facets = originalArray("principles", "data/facets.json", ["facets"]);
+    if (facets.some(function (facet) { return facet && facet.id === id; })) return "That facet id is already used.";
+    var ids = (draft.principles || []).map(function (value) { return Number(value); }).filter(function (value) { return S.byId[value]; });
+    if (!ids.length) return "A facet needs at least one principle.";
+    var situation = String(draft.fields.situation || "").trim();
+    var under = String(draft.fields.under || "").trim();
+    var justRight = String(draft.fields.justRight || "").trim();
+    var over = String(draft.fields.over || "").trim();
+    var problems = [];
+    if (!situation) problems.push("A calibration row needs a situation.");
+    ["under", "justRight", "over"].forEach(function (key) {
+      var text = key === "under" ? under : key === "justRight" ? justRight : over;
+      problems = problems.concat(checkText(text, { sentences: true }));
+    });
+    if (problems.length) return problems[0];
+    var used = {};
+    var rows = [];
+    ids.forEach(function (pid) {
+      var have = recordRows(pid);
+      if (!have.length) return;
+      used[have[0].id] = true;
+      rows.push({ principle: pid, id: have[0].id });
+    });
+    var rowId = slugify(situation);
+    if (!rowId) return "A row id has to be kebab-case.";
+    if (used[rowId]) rowId = rowId + "-row";
+    rows.push({ id: rowId, situation: situation, under: under, justRight: justRight, over: over, words: "generated" });
+    var value = { id: id, label: label, principles: ids.slice(), rows: rows };
+    var batch = "facet:" + nextSeq();
+    var current = replayValues("principles", "data/facets.json", ["facets"], facets);
+    queueOp({
+      op: "insert",
+      repo: "principles",
+      file: "data/facets.json",
+      path: ["facets"],
+      index: current.length,
+      value: value,
+      label: label,
+      field: "added",
+      listKind: "facet",
+      type: "facets",
+      itemKind: "facet",
+      batch: batch,
+      shared: true,
+      principleName: label,
+      tags: ids.map(function (pid) {
+        var meta = S.byId[pid];
+        return {
+          companyId: meta.companyId,
+          companyName: meta.companyName,
+          companyIndex: meta.companyIndex,
+          principleId: pid,
+          principleName: meta.name,
+          sort: meta.sort,
+        };
+      }),
+    });
+    linkFacet(id, ids, batch, label);
+    return "";
+  }
+
+  function rewriteTokens(text, slugs) {
+    return String(text || "").replace(/\{lp:([a-z0-9]+(?:-[a-z0-9]+)*)\}/g, function (all, slug) {
+      if (slugs.indexOf(slug) !== -1) return all;
+      return principleName("generic", slug) || slug;
+    });
+  }
+
+  function walkCopy(node, slugs) {
+    if (typeof node === "string") return rewriteTokens(node, slugs);
+    if (Array.isArray(node)) return node.map(function (item) { return walkCopy(item, slugs); });
+    if (node && typeof node === "object") {
+      var out = {};
+      Object.keys(node).forEach(function (key) { out[key] = walkCopy(node[key], slugs); });
+      return out;
+    }
+    return node;
+  }
+
+  function scaffoldTeaching(companyId, principleId, sourceSlug) {
+    var meta = S.byId[principleId];
+    var co = S.companies.filter(function (item) { return item.id === companyId; })[0];
+    var source = S.files["principles:data/teaching/generic/" + sourceSlug + ".json"];
+    if (!meta || !co || !source) return null;
+    var slugs = (co.principles || []).map(function (pr) { return pr.slug; });
+    var doc = walkCopy(source.json, slugs);
+    doc.id = meta.id;
+    doc.slug = meta.slug;
+    var related = (doc.related || []).filter(function (rel) {
+      return rel && slugs.indexOf(rel.id) !== -1 && rel.id !== meta.slug && rel.note;
+    });
+    var used = {};
+    related.forEach(function (rel) { used[rel.id] = true; });
+    (co.principles || []).forEach(function (pr) {
+      if (related.length >= 2) return;
+      if (pr.slug === meta.slug || used[pr.slug]) return;
+      related.push({ id: pr.slug, note: "Read this alongside " + pr.name + "." });
+      used[pr.slug] = true;
+    });
+    doc.related = related;
+    return doc;
+  }
+
+  function commitTeaching(draft) {
+    var sourceSlug = draft.fields.source;
+    var doc = scaffoldTeaching(draft.companyId, draft.principleId, sourceSlug);
+    if (!doc) return "Pick a generic teaching record to start from.";
+    if (!Array.isArray(doc.blog) || !doc.blog.length) return "The generic record has no further reading to copy.";
+    var batch = "teach:" + nextSeq();
+    var meta = S.byId[draft.principleId];
+    var tags = [{
+      companyId: draft.companyId,
+      companyName: draft.companyName,
+      companyIndex: meta ? meta.companyIndex : 99,
+      principleId: draft.principleId,
+      principleName: draft.principleName,
+      sort: meta ? meta.sort : 999,
+    }];
+    queueOp({
+      op: "create",
+      repo: "principles",
+      file: draft.file,
+      path: [],
+      value: doc,
+      label: draft.principleName,
+      field: "added",
+      listKind: "teaching",
+      type: "teaching",
+      batch: batch,
+      company: draft.companyId,
+      companyName: draft.companyName,
+      principleName: draft.principleName,
+      tags: tags,
+      itemId: "pending-teaching:" + draft.file,
+    });
+    var indexFile = "data/teaching/" + draft.companyId + "/index.json";
+    var entry = { id: meta.id, slug: meta.slug, file: meta.slug + ".json" };
+    if (S.files["principles:" + indexFile]) {
+      var list = replayValues("principles", indexFile, ["principles"], originalArray("principles", indexFile, ["principles"]));
+      queueOp({
+        op: "insert",
+        repo: "principles",
+        file: indexFile,
+        path: ["principles"],
+        index: list.length,
+        value: entry,
+        label: draft.principleName,
+        field: "added",
+        listKind: "catalog",
+        batch: batch,
+        company: draft.companyId,
+        companyName: draft.companyName,
+        principleName: draft.principleName,
+        tags: tags,
+      });
+    } else {
+      var blog = doc.blog[0];
+      queueOp({
+        op: "create",
+        repo: "principles",
+        file: indexFile,
+        path: [],
+        value: {
+          title: draft.companyName + ": a user's manual",
+          principles: [entry],
+          blog: [{ title: blog.title, url: blog.url, note: blog.note }],
+        },
+        label: draft.companyName + " teaching",
+        field: "added",
+        listKind: "teaching",
+        batch: batch,
+        company: draft.companyId,
+        companyName: draft.companyName,
+        principleName: "The set",
+        tags: [{
+          companyId: draft.companyId,
+          companyName: draft.companyName,
+          companyIndex: meta ? meta.companyIndex : 99,
+          principleId: 0,
+          principleName: "The set",
+          sort: 999,
+        }],
+      });
+    }
+    return "";
+  }
+
+  function deleteTeachingFile(item) {
+    if (!item || item.repo !== "principles") return;
+    var match = /^data\/teaching\/([a-z0-9-]+)\/([a-z0-9-]+)\.json$/.exec(item.file || "");
+    if (!match || match[2] === "index") return;
+    var companyId = match[1];
+    var slug = match[2];
+    var indexFile = "data/teaching/" + companyId + "/index.json";
+    var batch = "teach:" + nextSeq();
+    var meta = null;
+    var co = S.companies.filter(function (entry) { return entry.id === companyId; })[0];
+    if (co) meta = (co.principles || []).filter(function (pr) { return pr.slug === slug; })[0];
+    queueOp({
+      op: "delete",
+      repo: "principles",
+      file: item.file,
+      path: [],
+      label: (meta && meta.name) || slug,
+      field: "deleted",
+      batch: batch,
+      company: companyId,
+      companyName: co ? co.name : companyId,
+      principleName: meta ? meta.name : slug,
+      itemId: item.id,
+      tags: item.tags || [],
+    });
+    if (S.files["principles:" + indexFile]) {
+      var list = replayValues("principles", indexFile, ["principles"], originalArray("principles", indexFile, ["principles"]));
+      var index = -1;
+      for (var i = 0; i < list.length; i++) if (list[i] && list[i].slug === slug) index = i;
+      if (index !== -1) {
+        if (list.length <= 1) {
+          Object.keys(S.pending).forEach(function (key) {
+            if (S.pending[key].batch === batch) delete S.pending[key];
+          });
+          S.notice = "The teaching catalog cannot be empty.";
+          return;
+        }
+        queueOp({
+          op: "remove",
+          repo: "principles",
+          file: indexFile,
+          path: ["principles"],
+          index: index,
+          before: list[index],
+          label: (meta && meta.name) || slug,
+          field: "deleted",
+          listKind: "catalog",
+          batch: batch,
+          company: companyId,
+          companyName: co ? co.name : "",
+          principleName: meta ? meta.name : slug,
+        });
+      }
+    }
+    afterStruct();
+    S.filters.item = "";
+  }
+
+  function draftProblems(draft) {
+    var fields = draft.fields || {};
+    if (draft.mode === "blog") {
+      var titleErr = dashProblem(fields.title, true);
+      if (!String(fields.title || "").trim()) return "A reading link needs a title.";
+      if (titleErr.length) return titleErr[0];
+      if (!/^https:\/\/\S+$/.test(String(fields.url || "").trim())) return "A reading link needs an https URL.";
+      var essay = essayProblem(fields.url);
+      if (essay) return essay;
+      var noteErr = checkText(fields.note, { tokens: true });
+      if (noteErr.length) return noteErr[0];
+      return "";
+    }
+    if (draft.mode === "deepen") {
+      var qErr = checkText(fields.text, { questionMark: true, tokens: true });
+      if (qErr.length) return qErr[0];
+      return "";
+    }
+    if (draft.mode === "why") {
+      var whyErr = checkText(fields.text, { tokens: true });
+      if (whyErr.length) return whyErr[0];
+      return "";
+    }
+    if (draft.mode === "question") {
+      var textErr = checkText(fields.text, {});
+      if (textErr.length) return textErr[0];
+      return "";
+    }
+    if (draft.mode === "example") {
+      var exTitle = checkText(fields.title, {});
+      if (exTitle.length) return exTitle[0];
+      var exBody = checkText(fields.body, { tokens: true });
+      if (exBody.length) return exBody[0];
+      return "";
+    }
+    if (draft.mode === "related") {
+      if (!fields.related) return "A related note needs a principle.";
+      var relErr = checkText(fields.note, { tokens: true });
+      if (relErr.length) return relErr[0];
+      return "";
+    }
+    if (draft.mode === "row" || draft.mode === "facetRow") {
+      if (!String(fields.situation || "").trim()) return "A calibration row needs a situation.";
+      var rowErr = [];
+      ["under", "justRight", "over"].forEach(function (key) {
+        rowErr = rowErr.concat(checkText(fields[key], { sentences: true }));
+      });
+      if (rowErr.length) return rowErr[0];
+      if (!slugify(fields.situation)) return "A row id has to be kebab-case.";
+      return "";
+    }
+    if (draft.mode === "facet") return "";
+    if (draft.mode === "teaching") {
+      if (!fields.source) return "Pick a generic teaching record to start from.";
+      return "";
+    }
+    return "That list cannot be changed.";
+  }
+
+  function commitDraft() {
+    var draft = S.draft;
+    if (!draft) return;
+    if (draft.mode === "facet") {
+      var facetError = commitFacet(draft);
+      if (facetError) {
+        S.notice = facetError;
+        return;
+      }
+      S.draft = null;
+      afterStruct();
+      return;
+    }
+    if (draft.mode === "teaching") {
+      var teachError = commitTeaching(draft);
+      if (teachError) {
+        S.notice = teachError;
+        return;
+      }
+      S.draft = null;
+      afterStruct();
+      return;
+    }
+    var problem = draftProblems(draft);
+    if (problem) {
+      S.notice = problem;
+      return;
+    }
+    var fields = draft.fields;
+    var value;
+    var label = "";
+    if (draft.mode === "blog") {
+      value = { title: String(fields.title).trim(), url: String(fields.url).trim(), note: String(fields.note).trim() };
+      label = value.title;
+    } else if (draft.mode === "deepen" || draft.mode === "why") {
+      value = String(fields.text).trim();
+      label = value;
+    } else if (draft.mode === "question") {
+      value = { text: String(fields.text).trim() };
+      if (fields.manager) value.manager = true;
+      label = value.text;
+    } else if (draft.mode === "example") {
+      value = { title: String(fields.title).trim(), body: String(fields.body).trim() };
+      label = value.title;
+    } else if (draft.mode === "related") {
+      value = { id: fields.related, note: String(fields.note).trim() };
+      label = "Related: " + fields.related;
+    } else if (draft.mode === "row" || draft.mode === "facetRow") {
+      var rowId = slugify(fields.situation);
+      var existing = replayValues(draft.repo, draft.file, draft.path, originalArray(draft.repo, draft.file, draft.path));
+      var taken = {};
+      existing.forEach(function (row) { if (row && row.id) taken[row.id] = true; });
+      if (taken[rowId]) rowId = rowId + "-2";
+      value = {
+        id: rowId,
+        situation: String(fields.situation).trim(),
+        under: String(fields.under).trim(),
+        justRight: String(fields.justRight).trim(),
+        over: String(fields.over).trim(),
+      };
+      if (draft.mode === "facetRow") value.words = "generated";
+      label = value.situation;
+    }
+    var change = queueInsert(draft, value, label);
+    if (!change) return;
+    S.draft = null;
+    S.filters.item = "pending:" + change.id;
+    S.filters.type = draft.type && draft.type !== "all" ? draft.type : S.filters.type;
+  }
+
+  function startDraft(spec) {
+    var generic = S.companies.filter(function (co) { return co.id === "generic"; })[0];
+    var source = "";
+    if (generic && spec.slug) {
+      var same = (generic.principles || []).filter(function (pr) { return pr.slug === spec.slug; })[0];
+      source = same ? same.slug : ((generic.principles || [])[0] && generic.principles[0].slug) || "";
+    }
+    S.draft = {
+      mode: spec.kind || spec.mode,
+      type: spec.type,
+      repo: spec.repo,
+      file: spec.file,
+      path: spec.path,
+      kind: spec.kind || spec.mode,
+      companyId: spec.companyId || "",
+      principleId: spec.principleId || 0,
+      companyName: spec.companyName || "",
+      principleName: spec.principleName || "",
+      companyIndex: spec.companyIndex,
+      sort: spec.sort,
+      slug: spec.slug || "",
+      label: spec.label || addLabel(spec.kind || spec.mode),
+      fields: {
+        title: "",
+        url: "https://",
+        note: "",
+        text: "",
+        body: "",
+        situation: "",
+        under: "",
+        justRight: "",
+        over: "",
+        related: "",
+        source: source,
+        facetLabel: "",
+        manager: false,
+      },
+      principles: spec.principleId ? [String(spec.principleId)] : [],
+    };
+    S.notice = "";
+    S.filters.item = "";
+    S.result = null;
+  }
+
+  function addsFor(companyId, principleId) {
+    var out = [];
+    (S.lists || []).forEach(function (spec) {
+      if (spec.companyId !== companyId || String(spec.principleId) !== String(principleId)) return;
+      if (S.filters.type !== "all" && spec.type !== S.filters.type) return;
+      out.push(spec);
+    });
+    (S.teachingAdds || []).forEach(function (spec) {
+      if (spec.companyId !== companyId || String(spec.principleId) !== String(principleId)) return;
+      if (S.filters.type !== "all" && spec.type !== "teaching") return;
+      out.push(spec);
+    });
+    return out;
+  }
+
+  function addButton(spec) {
+    var index = S.addButtons.length;
+    S.addButtons.push(spec);
+    return el("button", { type: "button", class: "ed-add", "data-add": String(index) }, spec.label);
+  }
+
+  function appendAdds(parent, companyId, principleId) {
+    addsFor(companyId, principleId).forEach(function (spec) {
+      parent.appendChild(addButton(spec));
+    });
+  }
+
+  function listSpecForItem(item) {
+    if (!item || !item.listPath) return null;
+    var key = listKey(item.repo, item.file, item.listPath);
+    return S.listByKey[key] || {
+      kind: item.listKind,
+      type: item.type,
+      repo: item.repo,
+      file: item.file,
+      path: item.listPath,
+      companyId: item.company,
+      principleId: item.tags && item.tags[0] ? item.tags[0].principleId : 0,
+      companyName: item.tags && item.tags[0] ? item.tags[0].companyName : "",
+      principleName: item.tags && item.tags[0] ? item.tags[0].principleName : "",
+      label: addLabel(item.listKind),
+    };
+  }
+
+  function renderDraft(pane) {
+    var draft = S.draft;
+    if (!draft) return;
+    pane.appendChild(el("p", { class: "ed-kicker" }, draft.label));
+    pane.appendChild(el("h2", { class: "ed-text" }, draft.principleName || draft.companyName || "New entry"));
+    function field(name, label, multiline, type) {
+      pane.appendChild(el("label", { class: "ed-label", for: "ed-draft-" + name }, label));
+      var input;
+      if (multiline) {
+        input = el("textarea", { class: "ed-area", id: "ed-draft-" + name, "data-draft": name, rows: "4", spellcheck: "true", lang: "en" });
+        input.value = draft.fields[name] || "";
+      } else {
+        input = el("input", { class: "ed-input", id: "ed-draft-" + name, "data-draft": name, type: type || "text", spellcheck: "true", lang: "en" });
+        input.value = draft.fields[name] == null ? "" : draft.fields[name];
+      }
+      pane.appendChild(input);
+    }
+    if (draft.mode === "blog") {
+      field("title", "Title", false);
+      field("url", "URL", false, "url");
+      field("note", "Note", true);
+    } else if (draft.mode === "deepen" || draft.mode === "why" || draft.mode === "question") {
+      field("text", draft.mode === "question" ? "BIQ question" : draft.mode === "why" ? "Why" : "Concrete question", true);
+    } else if (draft.mode === "example") {
+      field("title", "Title", false);
+      field("body", "Example", true);
+    } else if (draft.mode === "related") {
+      pane.appendChild(el("label", { class: "ed-label", for: "ed-draft-related" }, "Principle"));
+      var select = el("select", { class: "ed-select", id: "ed-draft-related", "data-draft": "related" });
+      select.appendChild(el("option", { value: "" }, "Choose a principle"));
+      var co = S.companies.filter(function (item) { return item.id === draft.companyId; })[0];
+      ((co && co.principles) || []).forEach(function (pr) {
+        if (pr.slug === draft.slug) return;
+        var opt = el("option", { value: pr.slug }, pr.name);
+        if (draft.fields.related === pr.slug) opt.selected = true;
+        select.appendChild(opt);
+      });
+      pane.appendChild(select);
+      field("note", "Note", true);
+    } else if (draft.mode === "row" || draft.mode === "facetRow") {
+      field("situation", "Situation", false);
+      field("under", "Under", true);
+      field("justRight", "Just right", true);
+      field("over", "Over", true);
+      pane.appendChild(el("p", { class: "ed-banner" }, "Under, just right, and over need one to three sentences."));
+    } else if (draft.mode === "facet") {
+      field("facetLabel", "Label", false);
+      pane.appendChild(el("p", { class: "ed-banner" }, "The id is the slug of the label. Principles that already have calibration rows link their first row. Every selected principle keeps its calibration table and its BIQ questions."));
+      var box = el("div", { class: "ed-checks" });
+      S.companies.forEach(function (co) {
+        (co.principles || []).forEach(function (pr) {
+          var row = el("label", {});
+          var input = el("input", { type: "checkbox", "data-facet-principle": String(pr.id) });
+          input.checked = draft.principles.indexOf(String(pr.id)) !== -1;
+          row.appendChild(input);
+          row.appendChild(document.createTextNode(" " + pr.name + " · " + co.name));
+          box.appendChild(row);
+        });
+      });
+      pane.appendChild(box);
+      field("situation", "Generated row situation", false);
+      field("under", "Under", true);
+      field("justRight", "Just right", true);
+      field("over", "Over", true);
+    } else if (draft.mode === "teaching") {
+      pane.appendChild(el("label", { class: "ed-label", for: "ed-draft-source" }, "Start from generic teaching"));
+      var source = el("select", { class: "ed-select", id: "ed-draft-source", "data-draft": "source" });
+      var generic = S.companies.filter(function (item) { return item.id === "generic"; })[0];
+      ((generic && generic.principles) || []).forEach(function (pr) {
+        if (!S.files["principles:data/teaching/generic/" + pr.slug + ".json"]) return;
+        var opt = el("option", { value: pr.slug }, pr.name);
+        if (draft.fields.source === pr.slug) opt.selected = true;
+        source.appendChild(opt);
+      });
+      pane.appendChild(source);
+      pane.appendChild(el("p", { class: "ed-banner" }, "The new record copies that generic teaching, keeps this company's principle id, and rewrites links that this company does not have."));
+    }
+    if (S.notice) pane.appendChild(el("p", { class: "ed-warn", id: "ed-notice" }, S.notice));
+    var actions = el("div", { class: "ed-actions" });
+    actions.appendChild(el("button", { type: "button", id: "ed-draft-add" }, "Add to pending"));
+    actions.appendChild(el("button", { type: "button", id: "ed-draft-cancel" }, "Cancel"));
+    pane.appendChild(actions);
+  }
+
+  function renderListActions(item) {
+    if (!item || !item.listPath && item.kind !== "teaching" && item.kind !== "concrete" && item.kind !== "reading" && item.kind !== "facet") return null;
+    var actions = el("div", { class: "ed-actions" });
+    if (item.listPath) {
+      actions.appendChild(el("button", { type: "button", "data-act": "add" }, "Add another"));
+      actions.appendChild(el("button", { type: "button", "data-act": "up" }, "Move up"));
+      actions.appendChild(el("button", { type: "button", "data-act": "down" }, "Move down"));
+      actions.appendChild(el("button", { type: "button", "data-act": "delete" }, "Delete"));
+    }
+    if (item.kind === "facet" && item.file === "data/facets.json") {
+      actions.appendChild(el("button", { type: "button", "data-act": "delete-facet" }, "Delete facet"));
+    }
+    if ((item.kind === "teaching" || item.kind === "concrete" || item.kind === "reading") && item.file.indexOf("/index.json") === -1 && item.file.indexOf("data/teaching/") === 0) {
+      actions.appendChild(el("button", { type: "button", "data-act": "delete-teaching" }, "Delete teaching"));
+    }
+    return actions.childNodes.length ? actions : null;
+  }
+
+  function facetIdOf(item) {
+    if (!item || item.kind !== "facet" || !item.fields.length) return "";
+    var step = item.fields[0].path[1];
+    return step && step.id ? step.id : "";
+  }
+
+  function onDraftInput(input) {
+    if (!S.draft) return;
+    var name = input.getAttribute("data-draft");
+    if (!name) return;
+    if (input.type === "checkbox") S.draft.fields[name] = input.checked;
+    else S.draft.fields[name] = input.value;
+  }
+
+  function listChangeErrors(change) {
+    if (change.stale) return ["Stale. The list changed, so this edit was set aside. Undo it, then try again."];
+    if (change.op === "insert") {
+      if (change.listKind === "blog") {
+        var blogErr = [];
+        if (!change.value || !String(change.value.title || "").trim()) blogErr.push("A reading link needs a title.");
+        if (!change.value || !/^https:\/\/\S+$/.test(String(change.value.url || "").trim())) blogErr.push("A reading link needs an https URL.");
+        var essay = essayProblem(change.value && change.value.url);
+        if (essay) blogErr.push(essay);
+        if (!change.value || !String(change.value.note || "").trim()) blogErr.push("A reading link needs a note.");
+        return blogErr;
+      }
+      if (change.listKind === "deepen") return checkText(change.value, { questionMark: true, tokens: true });
+      if (change.listKind === "why") return checkText(change.value, { tokens: true });
+      if (change.listKind === "question") {
+        if (companyExamples(change.company)) return [(change.companyName || change.company) + " keeps an example pack for every question. Add it on a company without packs."];
+        return checkText(change.value && change.value.text, {});
+      }
+    }
+    return [];
+  }
+
+  function restoreOp(saved) {
+    var op = saved.op;
+    if (op !== "insert" && op !== "remove" && op !== "move" && op !== "create" && op !== "delete") return false;
+    if (!Array.isArray(saved.path) || saved.path.length > 8) return false;
+    if ((op === "insert" || op === "remove" || op === "move") && (typeof saved.index !== "number" || saved.path.length < 1)) return false;
+    if (op === "move" && typeof saved.to !== "number") return false;
+    if ((op === "insert" || op === "create") && saved.value == null) return false;
+    if ((op === "remove" || op === "move") && saved.before == null) return false;
+    var seq = typeof saved.seq === "number" ? saved.seq : nextSeq();
+    var id = listKey(saved.repo, saved.file, saved.path) + "\u0000" + op + "\u0000" + seq;
+    if (S.pending[id]) return false;
+    S.pending[id] = {
+      id: id,
+      op: op,
+      seq: seq,
+      itemId: saved.itemId || ("pending:" + id),
+      label: saved.label || "Item",
+      field: saved.field || (op === "insert" || op === "create" ? "added" : op === "move" ? "moved" : "deleted"),
+      repo: saved.repo,
+      file: saved.file,
+      path: saved.path,
+      index: saved.index,
+      to: saved.to,
+      value: saved.value,
+      before: saved.before,
+      company: saved.company || "",
+      companyName: saved.companyName || "",
+      principle: saved.principleName || saved.principle || "",
+      principleName: saved.principleName || saved.principle || "",
+      shared: !!saved.shared,
+      sha: typeof saved.sha === "string" ? saved.sha : "",
+      stale: false,
+      listKind: saved.listKind || "",
+      type: saved.type || "",
+      itemKind: saved.itemKind || "",
+      kicker: saved.kicker || "",
+      tags: Array.isArray(saved.tags) ? saved.tags : [],
+      batch: saved.batch || "",
+    };
+    return true;
+  }
+
+  async function loadMaps() {
+    S.maps = [];
+    S.mapsNote = "";
+    var files = [];
+    try {
+      var listing = await fetch("https://api.github.com/repos/kindel/principles/contents/data/maps", { cache: "no-store" });
+      if (listing.ok) {
+        var entries = await listing.json();
+        if (Array.isArray(entries)) {
+          entries.forEach(function (entry) {
+            if (entry && entry.type === "file" && /\.json$/.test(entry.name || "") && typeof entry.path === "string") files.push(entry.path);
+          });
+        }
+      }
+    } catch (err) {}
+    if (!files.length) files.push("data/maps/generic-amazon.json");
+    for (var i = 0; i < files.length; i++) {
+      try {
+        var text = await fetchText(RAW.principles + files[i]);
+        var kept = keep("principles", files[i], text);
+        S.maps.push({ file: files[i], json: kept.json });
+      } catch (err) {}
+    }
+    if (!S.maps.length) S.mapsNote = "Derivation maps are not loaded, so a facet change cannot be checked.";
+  }
+
   async function load() {
     renderShell();
     try {
       keep("principles", "data/index.json", await fetchText(RAW.principles + "data/index.json"));
       keep("principles", "data/facets.json", await fetchText(RAW.principles + "data/facets.json"));
       keep("biq", "data/questions.json", await fetchText(RAW.biq + "data/questions.json"));
+      await loadMaps();
       var index = S.files["principles:data/index.json"].json;
       var jobs = [];
       (index.companies || []).forEach(function (co) {
