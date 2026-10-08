@@ -481,6 +481,45 @@ test("a reused copy is grouped under the destination company and principle", () 
   assert.match(body, /## Amazon\n\n### Insist on the Highest Standards/);
 });
 
+test("a reused set-level reading edit keeps the set label", () => {
+  const plan = require("../lib/plan.js");
+  const before = "A short note.";
+  const named = {
+    companies: [
+      { id: "amazon", name: "Amazon", principles: [] },
+      { id: "generic", name: "Universal Leadership Principles", principles: [] },
+    ],
+  };
+  const namedMaps = [{ source: "generic", target: "amazon", pairs: [] }];
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: [{ note: before }] }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: [{ note: before }] }),
+  };
+  const change = {
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: ["blog", 0, "note"],
+    before: before,
+    after: "A clearer note.",
+    label: "A short note.",
+    field: "Note",
+    company: "amazon",
+    companyName: "Amazon",
+    principle: "The set",
+    principleName: "The set",
+  };
+  const result = reuse.expand([change], named, namedMaps, files);
+  assert.equal(result.ok, true);
+  const generic = result.changes.filter((one) => one.file.indexOf("/generic/") !== -1)[0];
+  assert.equal(generic.company, "generic");
+  assert.equal(generic.companyName, "Universal Leadership Principles");
+  assert.equal(generic.principleName, "The set");
+  const body = plan.pullBody([generic], "", "");
+  assert.match(body, /## Universal Leadership Principles/);
+  assert.match(body, /### The set/);
+  assert.doesNotMatch(body, /### index/);
+});
+
 test("two agreeing edits of the same reused field stay as the caller sent them", () => {
   const generic = Object.assign({}, edit, {
     file: "data/teaching/generic/invent-and-simplify.json",
