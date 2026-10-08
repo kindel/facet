@@ -1,7 +1,8 @@
 /* Facet. Hosted at /kld/apps/facet/ on kindel.com. The save function name stays editor-save.
    Facet rows and record rows: kindel/principles data/facets.json and data/<company>/<slug>.json.
    Teaching and further reading: data/teaching/<company>/.
-   BIQ questions: kindel/biq data/questions.json, text only. Ids stay put.
+   BIQ questions: kindel/biq data/questions.json. A company that stores questions
+   gets a new id and a stub example pack. A shared list stays empty.
    Concrete questions: the deepen list in data/teaching/<company>/<slug>.json. */
 (function () {
   "use strict";
@@ -1681,6 +1682,12 @@
       field.value = after;
       created.label = listLabel(item) || created.label;
       item.title = created.label;
+      if (created.listKind === "question" && field.live === "text" && created.batch) {
+        pendingList().forEach(function (other) {
+          if (other.batch !== created.batch || other.listKind !== "pack" || !other.value) return;
+          other.value.question = after;
+        });
+      }
       if (previous !== undefined) {
         pendingList().forEach(function (other) {
           if (!other.op || other.seq <= created.seq) return;
@@ -2522,7 +2529,7 @@
       replayItems(entry.repo, entry.file, entry.path).forEach(function (item) { out.push(item); });
     });
     pendingList().forEach(function (change) {
-      if (change.op === "create") out.push(syntheticFile(change));
+      if (change.op === "create" && change.listKind !== "pack") out.push(syntheticFile(change));
     });
     out.sort(compareItems);
     S.items = out;
@@ -2671,7 +2678,7 @@
     return Array.isArray(value) ? value : [];
   }
 
-  function queueInsert(spec, value, label) {
+  function queueInsert(spec, value, label, batch) {
     if (wordingClash(spec.repo, spec.file, spec.path)) {
       S.notice = "Save the list change and the wording change separately.";
       return null;
@@ -2683,9 +2690,9 @@
       S.notice = limit;
       return null;
     }
-    if (spec.kind === "question" && companyExamples(spec.companyId)) {
+    if (spec.kind === "question" && !companyExamples(spec.companyId)) {
       var coName = spec.companyName || spec.companyId;
-      S.notice = coName + " keeps an example pack for every question. Add it on a company without packs.";
+      S.notice = coName + " shows a shared BIQ list and does not store its own questions. Add the question on the company that stores them.";
       return null;
     }
     var home = metaFrom(spec, null);
@@ -2707,6 +2714,7 @@
       principleName: home.principleName,
       shared: spec.kind === "facetRow",
       tags: home.tags,
+      batch: batch || "",
     });
     afterStruct();
     return change;
@@ -3325,7 +3333,7 @@
       return "";
     }
     if (draft.mode === "question") {
-      var textErr = checkText(fields.text, {});
+      var textErr = checkText(fields.text, { questionMark: true });
       if (textErr.length) return textErr[0];
       return "";
     }
@@ -3398,9 +3406,46 @@
       value = String(fields.text).trim();
       label = value;
     } else if (draft.mode === "question") {
-      value = { text: String(fields.text).trim() };
-      if (fields.manager) value.manager = true;
-      label = value.text;
+      var qText = String(fields.text).trim();
+      var qId = freshQuestionId();
+      if (!qId) {
+        S.notice = "This browser could not mint a question id.";
+        return;
+      }
+      value = { text: qText, manager: !!fields.manager, id: qId };
+      label = qText;
+      var qBatch = "question:" + nextSeq();
+      var qChange = queueInsert(draft, value, label, qBatch);
+      if (!qChange) return;
+      if (companyExamples(draft.companyId)) {
+        queueOp({
+          op: "create",
+          repo: "biq",
+          file: "data/examples/" + qId + ".json",
+          path: [],
+          value: {
+            principle_id: draft.principleId,
+            principle: draft.principleName,
+            question: qText,
+          },
+          label: "Example pack",
+          field: "added",
+          listKind: "pack",
+          type: "questions",
+          itemKind: "question",
+          kicker: "Example pack",
+          batch: qBatch,
+          company: draft.companyId,
+          companyName: draft.companyName,
+          principleName: draft.principleName,
+          tags: qChange.tags,
+        });
+        afterStruct();
+      }
+      S.draft = null;
+      S.filters.item = "pending:" + qChange.id;
+      S.filters.type = draft.type && draft.type !== "all" ? draft.type : S.filters.type;
+      return;
     } else if (draft.mode === "example") {
       value = { title: String(fields.title).trim(), body: String(fields.body).trim() };
       label = value.title;
@@ -3430,7 +3475,101 @@
     S.filters.type = draft.type && draft.type !== "all" ? draft.type : S.filters.type;
   }
 
+  function freshQuestionId() {
+    var used = Object.create(null);
+    var bank = S.files["biq:data/questions.json"];
+    if (bank) {
+      (bank.json.companies || []).forEach(function (co) {
+        (co.principles || []).forEach(function (pr) {
+          (pr.questions || []).forEach(function (q) {
+            if (q && q.id) used[q.id] = true;
+          });
+        });
+      });
+      var mapped = bank.json.facetQuestions || {};
+      Object.keys(mapped).forEach(function (facet) {
+        var entry = mapped[facet];
+        var ids = Array.isArray(entry) ? entry : ((entry && entry.ids) || []);
+        ids.forEach(function (id) { used[id] = true; });
+      });
+    }
+    pendingList().forEach(function (change) {
+      if (change.value && typeof change.value.id === "string") used[change.value.id] = true;
+    });
+    if (!window.crypto || !window.crypto.getRandomValues) return "";
+    var bytes = new Uint8Array(4);
+    function hex(n) {
+      var s = n.toString(16);
+      return s.length === 1 ? "0" + s : s;
+    }
+    for (var n = 0; n < 8; n++) {
+      window.crypto.getRandomValues(bytes);
+      var id = hex(bytes[0]) + hex(bytes[1]) + hex(bytes[2]) + hex(bytes[3]);
+      if (!used[id]) return id;
+    }
+    return "";
+  }
+
+  function retargetQuestion(spec) {
+    if (!spec || (spec.kind || spec.mode) !== "question") return spec;
+    var bank = S.files["biq:data/questions.json"];
+    if (!bank) return spec;
+    var companies = bank.json.companies || [];
+    var owner = null;
+    var principle = null;
+    companies.forEach(function (co) {
+      if (co.id !== spec.companyId) return;
+      (co.principles || []).forEach(function (pr) {
+        if (pr.id === spec.principleId) {
+          owner = co;
+          principle = pr;
+        }
+      });
+    });
+    if (!owner || !principle) return spec;
+    if (owner.examples !== false) return spec;
+    if ((principle.questions || []).length) return spec;
+    var facets = principle.facets || [];
+    var donor = null;
+    companies.forEach(function (co) {
+      if (donor) return;
+      (co.principles || []).forEach(function (pr) {
+        if (donor || !(pr.questions || []).length) return;
+        var share = (pr.facets || []).some(function (facet) { return facets.indexOf(facet) !== -1; });
+        if (!share) return;
+        var meta = S.byId[pr.id] || {};
+        donor = {
+          companyId: co.id,
+          principleId: pr.id,
+          companyName: co.name,
+          principleName: pr.name,
+          companyIndex: meta.companyIndex == null ? 99 : meta.companyIndex,
+          sort: meta.sort == null ? 999 : meta.sort,
+          path: ["companies", { id: co.id }, "principles", { id: pr.id }, "questions"],
+          repo: "biq",
+          file: "data/questions.json",
+          kind: "question",
+          type: spec.type || "questions",
+          sharedFrom: (spec.companyName || spec.companyId) + ", " + (spec.principleName || "this principle"),
+        };
+      });
+    });
+    if (!donor) {
+      return Object.assign({}, spec, {
+        blocked: (owner.name || owner.id) + " shows a shared BIQ list and does not store its own questions. No company that stores this list was loaded.",
+      });
+    }
+    return Object.assign({}, spec, donor);
+  }
+
   function startDraft(spec) {
+    spec = retargetQuestion(spec);
+    if (spec.blocked) {
+      S.draft = null;
+      S.notice = spec.blocked;
+      S.filters.item = "";
+      return;
+    }
     var generic = S.companies.filter(function (co) { return co.id === "generic"; })[0];
     var source = "";
     if (generic && spec.slug) {
@@ -3452,6 +3591,7 @@
       sort: spec.sort,
       slug: spec.slug || "",
       label: spec.label || addLabel(spec.kind || spec.mode),
+      sharedFrom: spec.sharedFrom || "",
       fields: {
         title: "",
         url: "https://",
@@ -3541,6 +3681,19 @@
       field("note", "Note", true);
     } else if (draft.mode === "deepen" || draft.mode === "why" || draft.mode === "question") {
       field("text", draft.mode === "question" ? "BIQ question" : draft.mode === "why" ? "Why" : "Concrete question", true);
+      if (draft.mode === "question") {
+        var manager = el("label", { class: "ed-check" });
+        var managerBox = el("input", { type: "checkbox", id: "ed-draft-manager", "data-draft": "manager" });
+        managerBox.checked = !!draft.fields.manager;
+        manager.appendChild(managerBox);
+        manager.appendChild(document.createTextNode(" Manager question"));
+        pane.appendChild(manager);
+        var packNote = "This save adds a stub example pack with the principle and the question. It does not invent interview examples.";
+        if (draft.sharedFrom) {
+          packNote = "Stored on " + draft.companyName + ", " + draft.principleName + ". " + draft.sharedFrom + " shows this list through a shared facet. " + packNote;
+        }
+        pane.appendChild(el("p", { class: "ed-banner" }, packNote));
+      }
     } else if (draft.mode === "example") {
       field("title", "Title", false);
       field("body", "Example", true);
@@ -3649,8 +3802,23 @@
       if (change.listKind === "deepen") return checkText(change.value, { questionMark: true, tokens: true });
       if (change.listKind === "why") return checkText(change.value, { tokens: true });
       if (change.listKind === "question") {
-        if (companyExamples(change.company)) return [(change.companyName || change.company) + " keeps an example pack for every question. Add it on a company without packs."];
-        return checkText(change.value && change.value.text, {});
+        var qErr = checkText(change.value && change.value.text, { questionMark: true });
+        if (qErr.length) return qErr;
+        if (!change.value || !/^[0-9a-f]{8}$/.test(change.value.id || "")) return ["A question id has to be eight hex characters."];
+        if (!companyExamples(change.company)) {
+          return [(change.companyName || change.company) + " shows a shared BIQ list and does not store its own questions. Add the question on the company that stores them."];
+        }
+        var packFile = "data/examples/" + change.value.id + ".json";
+        var pack = pendingList().filter(function (other) {
+          return other.op === "create" && other.repo === "biq" && other.file === packFile && other.batch === change.batch;
+        })[0];
+        if (!pack) return [(change.companyName || change.company) + " keeps an example pack for every question. This save needs the pack file."];
+        return [];
+      }
+      if (change.listKind === "pack") {
+        if (!change.value || !String(change.value.question || "").trim()) return ["An example pack needs the question text."];
+        if (typeof change.value.principle_id !== "number") return ["An example pack needs a principle id."];
+        return [];
       }
     }
     return [];

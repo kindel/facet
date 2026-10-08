@@ -200,7 +200,103 @@ test("removing a facet that is still linked is refused, and so is a bare table",
 });
 
 test("an essay permalink has to use the kindel essays path", () => {
-  assert.match(rules.essayUrlError("https://blog.kindel.com/2024/07/23/how-to-write-a-working-backwards-doc/", ["how-to-write-a-working-backwards-doc"]), /kindel.com\/essays\/how-to-write-a-working-backwards-doc/);
+  const essay = "https://blog.kindel.com/" + "2024/07/23/how-to-write-a-working-backwards-doc/";
+  const other = "https://blog.kindel.com/" + "2019/05/30/focusing-on-users-is-not-customer-obsession/";
+  assert.match(rules.essayUrlError(essay, ["how-to-write-a-working-backwards-doc"]), /kindel.com\/essays\/how-to-write-a-working-backwards-doc/);
   assert.equal(rules.essayUrlError("https://kindel.com/essays/how-to-write-a-working-backwards-doc/", ["how-to-write-a-working-backwards-doc"]), "");
-  assert.equal(rules.essayUrlError("https://blog.kindel.com/2019/05/30/focusing-on-users-is-not-customer-obsession/", ["how-to-write-a-working-backwards-doc"]), "");
+  assert.equal(rules.essayUrlError(other, ["how-to-write-a-working-backwards-doc"]), "");
+});
+
+test("a shared BIQ list cannot grow on the company that only displays it", () => {
+  const before = JSON.stringify({
+    companies: [
+      { id: "amazon", name: "Amazon", examples: true, principles: [{ id: 1001, name: "Customer Obsession", facets: ["customer-obsession"], questions: [{ id: "f76d64d6", text: "Tell me?", manager: false }] }] },
+      { id: "generic", name: "Universal Leadership Principles", examples: false, principles: [{ id: 8001, name: "Customer Obsession", facets: ["customer-obsession"], questions: [] }] },
+    ],
+  });
+  const after = JSON.parse(before);
+  after.companies[1].principles[0].questions = [{ text: "Who changed the plan?" }];
+  const errors = guard.review(
+    { "biq:data/questions.json": before },
+    { "biq:data/questions.json": JSON.stringify(after) },
+    [{ repo: "biq", file: "data/questions.json", op: "insert", path: ["companies", { id: "generic" }, "principles", { id: 8001 }, "questions"], index: 0 }]
+  );
+  assert.match(errors.join("\n"), /shared from Amazon/);
+});
+
+test("a new BIQ question is accepted with its stub pack", () => {
+  const beforeDoc = {
+    companies: [
+      { id: "amazon", name: "Amazon", examples: true, principles: [{ id: 1001, name: "Customer Obsession", facets: ["customer-obsession"], questions: [{ id: "f76d64d6", text: "Tell me?", manager: false }] }] },
+      { id: "generic", name: "Universal Leadership Principles", examples: false, principles: [{ id: 8001, name: "Customer Obsession", facets: ["customer-obsession"], questions: [] }] },
+    ],
+  };
+  const before = JSON.stringify(beforeDoc);
+  const added = { text: "Who changed the plan?", manager: false, id: "abc12345" };
+  const afterDoc = JSON.parse(before);
+  afterDoc.companies[0].principles[0].questions.push(added);
+  const pack = JSON.stringify({ principle_id: 1001, principle: "Customer Obsession", question: added.text }, null, 2) + "\n";
+  const files = {
+    "biq:data/questions.json": JSON.stringify(afterDoc),
+    "biq:data/examples/abc12345.json": pack,
+  };
+  const errors = guard.review(
+    { "biq:data/questions.json": before },
+    files,
+    [
+      { repo: "biq", file: "data/questions.json", op: "insert", path: ["companies", { id: "amazon" }, "principles", { id: 1001 }, "questions"], index: 1, value: added },
+      { repo: "biq", file: "data/examples/abc12345.json", op: "create", path: [], value: { principle_id: 1001, principle: "Customer Obsession", question: added.text } },
+    ]
+  );
+  assert.deepEqual(errors, []);
+  const wrong = Object.assign({}, files, {
+    "biq:data/examples/abc12345.json": JSON.stringify({ principle_id: 1002, principle: "Ownership", question: added.text }),
+  });
+  const mismatch = guard.review({ "biq:data/questions.json": before }, wrong, [
+    { repo: "biq", file: "data/questions.json", op: "insert", path: ["companies", { id: "amazon" }, "principles", { id: 1001 }, "questions"], index: 1 },
+  ]);
+  assert.match(mismatch.join("\n"), /different principle/);
+});
+
+test("a stub example pack is a new file next to the question", () => {
+  const bank = JSON.stringify({
+    companies: [{ id: "amazon", name: "Amazon", examples: true, principles: [{ id: 1001, name: "Customer Obsession", facets: ["customer-obsession"], questions: [{ text: "Tell me?", manager: false, id: "f76d64d6" }] }] }],
+  }, null, 2) + "\n";
+  const prepared = plan.prepare(
+    { "biq:data/questions.json": bank },
+    [
+      {
+        op: "insert",
+        repo: "biq",
+        file: "data/questions.json",
+        path: ["companies", { id: "amazon" }, "principles", { id: 1001 }, "questions"],
+        index: 1,
+        value: { text: "Who changed the plan?", manager: false, id: "abc12345" },
+        label: "Who changed the plan?",
+        field: "added",
+        company: "amazon",
+      },
+      {
+        op: "create",
+        repo: "biq",
+        file: "data/examples/abc12345.json",
+        path: [],
+        value: { principle_id: 1001, principle: "Customer Obsession", question: "Who changed the plan?" },
+        label: "Example pack",
+        field: "added",
+      },
+    ],
+    {}
+  );
+  assert.equal(prepared.ok, true, prepared.ok ? "" : prepared.errors[0].error);
+  const pack = prepared.files.filter((file) => file.file.indexOf("examples/") !== -1)[0];
+  assert.equal(pack.created, true);
+  assert.match(pack.after, /Who changed the plan\?/);
+  assert.equal(allow.assess({
+    op: "create",
+    repo: "biq",
+    file: "data/examples/abc12345.json",
+    path: [],
+    value: { principle_id: 1001, principle: "Customer Obsession", question: "Who changed the plan?" },
+  }).ok, true);
 });
