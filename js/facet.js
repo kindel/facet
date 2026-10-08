@@ -898,7 +898,7 @@
           var holder = { fields: [] };
           addField(holder, "title", "Title", ["blog", i, "title"], post.title, { allowEnDash: true });
           addField(holder, "url", "URL", ["blog", i, "url"], post.url, { url: true });
-          addField(holder, "note", "Note", ["blog", i, "note"], post.note, { multiline: true });
+          addField(holder, "note", "Note", ["blog", i, "note"], post.note, { multiline: true, tokens: true });
           items.push(baseItem({
             id: "read:" + co.id + ":" + entry.id + ":" + i,
             type: "reading",
@@ -919,7 +919,7 @@
         var holder = { fields: [] };
         addField(holder, "title", "Title", ["blog", i, "title"], post.title, { allowEnDash: true });
         addField(holder, "url", "URL", ["blog", i, "url"], post.url, { url: true });
-        addField(holder, "note", "Note", ["blog", i, "note"], post.note, { multiline: true });
+        addField(holder, "note", "Note", ["blog", i, "note"], post.note, { multiline: true, tokens: true });
         var setTag = {
           companyId: co.id,
           companyName: co.name,

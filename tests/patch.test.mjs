@@ -203,6 +203,42 @@ test("a principle link in a related note must be listed in related", () => {
   assert.equal(listed.ok, true, JSON.stringify(listed.errors));
 });
 
+test("a further reading note rejects an unknown or broken principle link", () => {
+  const slugs = ["ownership", "bias-for-action"];
+  const teaching = `{
+  "blog": [
+    {"title": "A note", "url": "https://blog.kindel.com/x/", "note": "Why it belongs."}
+  ]
+}
+`;
+  const unknown = plan.prepare(
+    { "principles:data/teaching/amazon/ownership.json": teaching },
+    [{
+      repo: "principles",
+      file: "data/teaching/amazon/ownership.json",
+      path: ["blog", 0, "note"],
+      before: "Why it belongs.",
+      after: "See {lp:not-a-principle}.",
+    }],
+    { amazon: slugs }
+  );
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.errors[0].error, /Unknown principle link \{lp:not-a-principle\}/);
+  const broken = plan.prepare(
+    { "principles:data/teaching/amazon/ownership.json": teaching },
+    [{
+      repo: "principles",
+      file: "data/teaching/amazon/ownership.json",
+      path: ["blog", 0, "note"],
+      before: "Why it belongs.",
+      after: "See {lp:ownership",
+    }],
+    { amazon: slugs }
+  );
+  assert.equal(broken.ok, false);
+  assert.match(broken.errors[0].error, /Principle links look like/);
+});
+
 test("a principle link in a further reading note must be listed in related", () => {
   const slugs = ["ownership", "bias-for-action", "deliver-results"];
   const doc = {
