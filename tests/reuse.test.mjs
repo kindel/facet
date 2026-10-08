@@ -200,6 +200,77 @@ test("a facet row edit does not ask for derivation maps", () => {
   assert.equal(reuse.needsMaps([edit]), true);
 });
 
+test("a chain of maps rewrites the slug through the shared source", () => {
+  const amazonWhy = "See {lp:insist-on-the-highest-standards}.";
+  const genericWhy = "See {lp:insist-on-high-standards}.";
+  const armWhy = "See {lp:high-bar}.";
+  const edited = "Read {lp:insist-on-the-highest-standards}.";
+  const chainIndex = {
+    companies: [
+      {
+        id: "amazon",
+        principles: [
+          { id: 1007, slug: "insist-on-the-highest-standards" },
+          { id: 1014, slug: "deliver-results" },
+        ],
+      },
+      {
+        id: "generic",
+        principles: [
+          { id: 8007, slug: "insist-on-high-standards" },
+          { id: 8014, slug: "deliver-results" },
+        ],
+      },
+      {
+        id: "arm",
+        principles: [
+          { id: 9007, slug: "high-bar" },
+          { id: 9014, slug: "deliver-results" },
+        ],
+      },
+    ],
+  };
+  const chainMaps = [
+    {
+      source: "generic",
+      target: "amazon",
+      pairs: [
+        { sourceSlug: "insist-on-high-standards", targetIds: [1007] },
+        { sourceSlug: "deliver-results", targetIds: [1014] },
+      ],
+    },
+    {
+      source: "generic",
+      target: "arm",
+      pairs: [
+        { sourceSlug: "insist-on-high-standards", targetIds: [9007] },
+        { sourceSlug: "deliver-results", targetIds: [9014] },
+      ],
+    },
+  ];
+  const files = {
+    "principles:data/teaching/amazon/deliver-results.json": JSON.stringify({ why: amazonWhy }),
+    "principles:data/teaching/generic/deliver-results.json": JSON.stringify({ why: genericWhy }),
+    "principles:data/teaching/arm/deliver-results.json": JSON.stringify({ why: armWhy }),
+  };
+  const change = Object.assign({}, edit, {
+    file: "data/teaching/amazon/deliver-results.json",
+    path: ["why"],
+    before: amazonWhy,
+    after: edited,
+    company: "amazon",
+  });
+  const result = reuse.expand([change], chainIndex, chainMaps, files);
+  assert.equal(result.ok, true);
+  assert.equal(result.changes.length, 3);
+  const generic = result.changes.filter((one) => one.file.indexOf("/generic/") !== -1)[0];
+  const arm = result.changes.filter((one) => one.file.indexOf("/arm/") !== -1)[0];
+  assert.equal(generic.before, genericWhy);
+  assert.equal(generic.after, "Read {lp:insist-on-high-standards}.");
+  assert.equal(arm.before, armWhy);
+  assert.equal(arm.after, "Read {lp:high-bar}.");
+});
+
 test("two agreeing edits of the same reused field stay as the caller sent them", () => {
   const generic = Object.assign({}, edit, {
     file: "data/teaching/generic/invent-and-simplify.json",
