@@ -122,6 +122,95 @@ test("a reused teaching catalog entry keeps the other company's id", () => {
   assert.deepEqual(added.changes[1].value, { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" });
 });
 
+test("a reused list edit is refused when any sibling entry already differs", () => {
+  const amazon = JSON.stringify({ id: 1003, slug: "invent-and-simplify", deepen: ["A", "B", "C"] });
+  const different = JSON.stringify({ id: 8006, slug: "invent-and-simplify", deepen: ["A", "DIFFERENT", "C"] });
+  const matched = JSON.stringify({ id: 8006, slug: "invent-and-simplify", deepen: ["A", "B", "C"] });
+  const files = {
+    "principles:data/teaching/amazon/invent-and-simplify.json": amazon,
+    "principles:data/teaching/generic/invent-and-simplify.json": different,
+  };
+  function run(op, extra, texts) {
+    return reuse.expand([Object.assign({
+      op: op,
+      repo: "principles",
+      file: "data/teaching/amazon/invent-and-simplify.json",
+      path: ["deepen"],
+      index: 0,
+      seq: 1,
+      company: "amazon",
+    }, extra)], index, maps, texts || files);
+  }
+  const inserted = run("insert", { value: "New?" });
+  assert.equal(inserted.ok, false);
+  assert.match(inserted.error, /already differs/);
+  const removed = run("remove", { before: "A" });
+  assert.equal(removed.ok, false);
+  assert.match(removed.error, /already differs/);
+  const moved = run("move", { to: 2, before: "A" });
+  assert.equal(moved.ok, false);
+  assert.match(moved.error, /already differs/);
+  const sameFiles = {
+    "principles:data/teaching/amazon/invent-and-simplify.json": amazon,
+    "principles:data/teaching/generic/invent-and-simplify.json": matched,
+  };
+  const copied = run("insert", { index: 1, value: "New?" }, sameFiles);
+  assert.equal(copied.ok, true, copied.error);
+  assert.equal(copied.changes[1].op, "insert");
+  assert.equal(copied.changes[1].index, 1);
+  assert.equal(copied.changes[1].value, "New?");
+  const movedOk = run("move", { to: 2, before: "A" }, sameFiles);
+  assert.equal(movedOk.ok, true, movedOk.error);
+  assert.equal(movedOk.changes[1].op, "move");
+  assert.equal(movedOk.changes[1].index, 0);
+  assert.equal(movedOk.changes[1].to, 2);
+  const renamedIndex = {
+    companies: [
+      {
+        id: "amazon",
+        principles: [
+          { id: 1007, slug: "insist-on-the-highest-standards" },
+          { id: 1014, slug: "deliver-results" },
+        ],
+      },
+      {
+        id: "generic",
+        principles: [
+          { id: 8007, slug: "insist-on-high-standards" },
+          { id: 8014, slug: "deliver-results" },
+        ],
+      },
+    ],
+  };
+  const renamedMaps = [{
+    source: "generic",
+    target: "amazon",
+    pairs: [
+      { sourceSlug: "insist-on-high-standards", targetIds: [1007] },
+      { sourceSlug: "deliver-results", targetIds: [1014] },
+    ],
+  }];
+  const translated = reuse.expand([{
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/amazon/deliver-results.json",
+    path: ["deepen"],
+    index: 1,
+    seq: 1,
+    value: "New?",
+    company: "amazon",
+  }], renamedIndex, renamedMaps, {
+    "principles:data/teaching/amazon/deliver-results.json": JSON.stringify({
+      deepen: ["See {lp:insist-on-the-highest-standards}."],
+    }),
+    "principles:data/teaching/generic/deliver-results.json": JSON.stringify({
+      deepen: ["See {lp:insist-on-high-standards}."],
+    }),
+  });
+  assert.equal(translated.ok, true, translated.error);
+  assert.equal(translated.changes[1].value, "New?");
+});
+
 test("a reused list that already differs is refused", () => {
   const result = reuse.expand([Object.assign({}, edit, {
     op: "remove",

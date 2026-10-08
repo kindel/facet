@@ -525,7 +525,7 @@ test("a new teaching catalog checks each entry and each new reading link", () =>
   const ok = rules.structuralShape({
     principles: [{ id: 1002, slug: "ownership", file: "ownership.json" }],
     blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
-  }, "data/teaching/amazon/index.json", true);
+  }, "data/teaching/amazon/index.json", true, { records: { ownership: 1002 } });
   assert.equal(ok.length, 0);
 });
 
@@ -840,6 +840,117 @@ test("a new teaching record has to match its principle", () => {
   const refused = plan.prepare({ "principles:data/index.json": indexText }, [mismatched], slugs);
   assert.equal(refused.ok, false);
   assert.match(refused.errors[0].error, /id does not match the principle/);
+});
+
+test("a new teaching catalog checks a reading token for resolution only", () => {
+  const indexText = JSON.stringify({
+    companies: [{
+      id: "generic",
+      principles: [
+        { id: 8002, slug: "ownership" },
+        { id: 8003, slug: "earn-trust" },
+        { id: 8004, slug: "deliver-results" },
+      ],
+    }],
+  });
+  const catalog = {
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: [],
+    value: {
+      title: "Universal: a user's manual",
+      principles: [{ id: 8002, slug: "ownership", file: "ownership.json" }],
+      blog: [{ title: "A note", url: "https://kindel.com/a", note: "See {lp:ownership}." }],
+    },
+    company: "generic",
+  };
+  const files = {
+    "principles:data/index.json": indexText,
+    "principles:data/teaching/generic/ownership.json": teaching(8),
+  };
+  const ok = plan.prepare(files, [catalog], slugs);
+  assert.equal(ok.ok, true, JSON.stringify(ok.errors));
+  const unknown = {
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: [],
+    value: {
+      title: "Universal: a user's manual",
+      principles: [{ id: 8002, slug: "ownership", file: "ownership.json" }],
+      blog: [{ title: "A note", url: "https://kindel.com/a", note: "See {lp:not-a-principle}." }],
+    },
+    company: "generic",
+  };
+  const bad = plan.prepare(files, [unknown], slugs);
+  assert.equal(bad.ok, false);
+  assert.match(bad.errors[0].error, /Unknown principle link/);
+  assert.equal(bad.errors[0].error.indexOf("missing from related"), -1);
+  const record = JSON.parse(teaching(8));
+  record.blog[0].note = "See {lp:ownership}.";
+  const recordCreate = {
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/generic/ownership.json",
+    path: [],
+    value: record,
+    company: "generic",
+  };
+  const needsRelated = plan.prepare({ "principles:data/index.json": indexText }, [recordCreate], slugs);
+  assert.equal(needsRelated.ok, false);
+  assert.match(needsRelated.errors[0].error, /missing from related/);
+});
+
+test("a catalog id has to match the company principle", () => {
+  const indexText = JSON.stringify({
+    companies: [{
+      id: "generic",
+      principles: [
+        { id: 8002, slug: "ownership" },
+        { id: 8003, slug: "earn-trust" },
+        { id: 8004, slug: "deliver-results" },
+      ],
+    }],
+  });
+  const catalogText = JSON.stringify({
+    principles: [{ id: 8002, slug: "ownership", file: "ownership.json" }],
+    blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+  });
+  const wrongInsert = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 1,
+    value: { id: 1111, slug: "earn-trust", file: "earn-trust.json" },
+    company: "generic",
+  };
+  const inserted = plan.prepare({
+    "principles:data/index.json": indexText,
+    "principles:data/teaching/generic/index.json": catalogText,
+  }, [wrongInsert], slugs);
+  assert.equal(inserted.ok, false);
+  assert.match(inserted.errors[0].error, /id does not match the principle/);
+  const created = plan.prepare({ "principles:data/index.json": indexText }, [{
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: [],
+    value: {
+      title: "Universal: a user's manual",
+      principles: [{ id: 1111, slug: "ownership", file: "ownership.json" }],
+      blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+    },
+    company: "generic",
+  }], slugs);
+  assert.equal(created.ok, false);
+  assert.match(created.errors[0].error, /id does not match the principle/);
+  const unloaded = plan.prepare({
+    "principles:data/teaching/generic/index.json": catalogText,
+  }, [wrongInsert], slugs);
+  assert.equal(unloaded.ok, false);
+  assert.match(unloaded.errors[0].error, /principle list for this company is missing/);
 });
 
 test("adding teaching lists the record, and a catalog entry needs the file", () => {
