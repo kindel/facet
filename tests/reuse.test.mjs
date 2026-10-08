@@ -195,6 +195,132 @@ test("an allowlisted difference is not overwritten", () => {
   assert.match(result.error, /already differs/);
 });
 
+test("a related note selected by slug is found under the destination slug", () => {
+  const amazonNote = "See {lp:insist-on-the-highest-standards}.";
+  const genericNote = "See {lp:insist-on-high-standards}.";
+  const renamedIndex = {
+    companies: [
+      {
+        id: "amazon",
+        principles: [
+          { id: 1007, slug: "insist-on-the-highest-standards" },
+          { id: 1014, slug: "deliver-results" },
+        ],
+      },
+      {
+        id: "generic",
+        principles: [
+          { id: 8007, slug: "insist-on-high-standards" },
+          { id: 8014, slug: "deliver-results" },
+        ],
+      },
+    ],
+  };
+  const renamedMaps = [{
+    source: "generic",
+    target: "amazon",
+    pairs: [
+      { sourceSlug: "insist-on-high-standards", targetIds: [1007] },
+      { sourceSlug: "deliver-results", targetIds: [1014] },
+    ],
+  }];
+  const files = {
+    "principles:data/teaching/amazon/deliver-results.json": JSON.stringify({
+      related: [{ id: "insist-on-the-highest-standards", note: amazonNote }],
+    }),
+    "principles:data/teaching/generic/deliver-results.json": JSON.stringify({
+      related: [{ id: "insist-on-high-standards", note: genericNote }],
+    }),
+  };
+  const change = Object.assign({}, edit, {
+    file: "data/teaching/amazon/deliver-results.json",
+    path: ["related", { id: "insist-on-the-highest-standards" }, "note"],
+    before: amazonNote,
+    after: "Read {lp:insist-on-the-highest-standards}.",
+    company: "amazon",
+  });
+  const result = reuse.expand([change], renamedIndex, renamedMaps, files);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.changes.length, 2);
+  assert.deepEqual(result.changes[1].path, ["related", { id: "insist-on-high-standards" }, "note"]);
+  assert.equal(result.changes[1].before, genericNote);
+  assert.equal(result.changes[1].after, "Read {lp:insist-on-high-standards}.");
+});
+
+test("a related selector walks a chain of maps to the far company", () => {
+  const amazonNote = "See {lp:insist-on-the-highest-standards}.";
+  const genericNote = "See {lp:insist-on-high-standards}.";
+  const armNote = "See {lp:high-bar}.";
+  const chainIndex = {
+    companies: [
+      {
+        id: "amazon",
+        principles: [
+          { id: 1007, slug: "insist-on-the-highest-standards" },
+          { id: 1014, slug: "deliver-results" },
+        ],
+      },
+      {
+        id: "generic",
+        principles: [
+          { id: 8007, slug: "insist-on-high-standards" },
+          { id: 8014, slug: "deliver-results" },
+        ],
+      },
+      {
+        id: "arm",
+        principles: [
+          { id: 9007, slug: "high-bar" },
+          { id: 9014, slug: "deliver-results" },
+        ],
+      },
+    ],
+  };
+  const chainMaps = [
+    {
+      source: "generic",
+      target: "amazon",
+      pairs: [
+        { sourceSlug: "insist-on-high-standards", targetIds: [1007] },
+        { sourceSlug: "deliver-results", targetIds: [1014] },
+      ],
+    },
+    {
+      source: "generic",
+      target: "arm",
+      pairs: [
+        { sourceSlug: "insist-on-high-standards", targetIds: [9007] },
+        { sourceSlug: "deliver-results", targetIds: [9014] },
+      ],
+    },
+  ];
+  const files = {
+    "principles:data/teaching/amazon/deliver-results.json": JSON.stringify({
+      related: [{ id: "insist-on-the-highest-standards", note: amazonNote }],
+    }),
+    "principles:data/teaching/generic/deliver-results.json": JSON.stringify({
+      related: [{ id: "insist-on-high-standards", note: genericNote }],
+    }),
+    "principles:data/teaching/arm/deliver-results.json": JSON.stringify({
+      related: [{ id: "high-bar", note: armNote }],
+    }),
+  };
+  const change = Object.assign({}, edit, {
+    file: "data/teaching/amazon/deliver-results.json",
+    path: ["related", { id: "insist-on-the-highest-standards" }, "note"],
+    before: amazonNote,
+    after: "Read {lp:insist-on-the-highest-standards}.",
+    company: "amazon",
+  });
+  const result = reuse.expand([change], chainIndex, chainMaps, files);
+  assert.equal(result.ok, true, result.error);
+  const arm = result.changes.filter((one) => one.file.indexOf("/arm/") !== -1)[0];
+  assert.ok(arm);
+  assert.deepEqual(arm.path, ["related", { id: "high-bar" }, "note"]);
+  assert.equal(arm.before, armNote);
+  assert.equal(arm.after, "Read {lp:high-bar}.");
+});
+
 test("a facet row edit does not ask for derivation maps", () => {
   assert.equal(reuse.needsMaps([{ repo: "principles", file: "data/facets.json" }]), false);
   assert.equal(reuse.needsMaps([edit]), true);
