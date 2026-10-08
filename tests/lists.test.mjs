@@ -1477,6 +1477,37 @@ test("calibration words stay inside quoted, authored, and generated", () => {
   assert.match(saved.files[0].after, /"words": "authored"/);
 });
 
+test("removing a facet's last row is refused", () => {
+  const before = facetDoc([generatedRow]);
+  const removed = plan.prepare({
+    "principles:data/facets.json": JSON.stringify(before),
+  }, [{
+    op: "remove",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets", { id: "ownership" }, "rows"],
+    index: 0,
+    before: generatedRow,
+  }]);
+  assert.equal(removed.ok, false);
+  assert.match(removed.errors[0].error, /Facet ownership needs at least one row/);
+  const covered = JSON.parse(JSON.stringify(before));
+  covered.facets.push({
+    id: "extra",
+    label: "extra",
+    principles: [1002],
+    rows: [generatedRow],
+  });
+  const stillEmpty = rules.structuralShape({
+    version: 1,
+    facets: [
+      { id: "ownership", label: "ownership", principles: [1002], rows: [] },
+      covered.facets[1],
+    ],
+  }, "data/facets.json", false, { rowsByPrinciple: { "1002": {} } });
+  assert.match(stillEmpty.join("\n"), /Facet ownership needs at least one row/);
+});
+
 test("a source ref cannot carry inline prose", () => {
   const spec = {
     item: "facetRow",
