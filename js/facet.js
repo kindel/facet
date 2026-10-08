@@ -241,13 +241,56 @@
     };
   }
 
+  function relatedIdsFor(item) {
+    if (!item || item.repo !== "principles") return null;
+    if (item.file.indexOf("data/teaching/") !== 0) return null;
+    if (item.file.slice(-11) === "/index.json") return null;
+    var stored = S.files[item.repo + ":" + item.file];
+    if (!stored || !stored.json || !Array.isArray(stored.json.related)) return [];
+    var ids = [];
+    stored.json.related.forEach(function (rel) {
+      if (rel && typeof rel.id === "string") ids.push(rel.id);
+    });
+    return ids;
+  }
+
+  function principleName(company, slug) {
+    var co = S.companies.filter(function (c) { return c.id === company; })[0];
+    var pr = co && (co.principles || []).filter(function (p) { return p.slug === slug; })[0];
+    return pr && pr.name ? pr.name : slug;
+  }
+
+  function missingRelatedErrors(item, text) {
+    var related = relatedIdsFor(item);
+    if (!related || String(text || "").indexOf("{lp:") === -1) return [];
+    var errors = [];
+    var seen = {};
+    var re = /\{lp:([a-z0-9]+(?:-[a-z0-9]+)*)\}/g;
+    var match;
+    var slugs = slugsFor(item.company);
+    while ((match = re.exec(text))) {
+      var slug = match[1];
+      if (seen[slug]) continue;
+      seen[slug] = true;
+      if (slugs.indexOf(slug) === -1) continue;
+      if (related.indexOf(slug) === -1) {
+        errors.push(principleName(item.company, slug) + " is missing from Related. Add it there, or take the link out, before saving.");
+      }
+    }
+    return errors;
+  }
+
+  function fieldErrors(item, field, text) {
+    return checkText(text, fieldSpec(item, field)).concat(missingRelatedErrors(item, text));
+  }
+
   function changeErrors(change) {
     if (change.stale) return ["Stale. The text changed, so the current text is shown. Undo this edit, then edit again."];
     var item = itemById(change.itemId);
     if (!item) return ["That edit is no longer on the page. Undo it."];
     var field = fieldByPath(item, change.path);
     if (!field) return ["That field is not editable."];
-    return checkText(change.after, fieldSpec(item, field));
+    return fieldErrors(item, field, change.after);
   }
 
   function hasErrors() {
@@ -1155,7 +1198,7 @@
       }
       pane.appendChild(input);
       var warn = el("p", { class: "ed-field-error", id: "ed-warn-" + index, "data-warn": String(index) });
-      var errors = checkText(value, fieldSpec(item, field));
+      var errors = fieldErrors(item, field, value);
       var staleHit = S.pending[changeId(item, field)];
       if (staleHit && staleHit.stale) errors = ["This edit is stale. The text changed since you wrote it. The current text is shown."].concat(errors);
       warn.hidden = !errors.length;
@@ -1536,7 +1579,7 @@
       };
     }
     persistPending();
-    var errors = checkText(after, fieldSpec(item, field));
+    var errors = fieldErrors(item, field, after);
     var warn = root.querySelector('[data-warn="' + input.getAttribute("data-field") + '"]');
     if (warn) {
       warn.hidden = !errors.length;

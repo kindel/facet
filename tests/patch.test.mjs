@@ -167,6 +167,61 @@ test("nearby edits share one hunk so context is not stale", () => {
   assert.doesNotMatch(patchText, /^- {2}"b":/m);
 });
 
+test("a principle link in a related note must be listed in related", () => {
+  const slugs = ["ownership", "bias-for-action", "deliver-results"];
+  const teaching = `{
+  "related": [
+    {"id": "ownership", "note": "The owner."},
+    {"id": "bias-for-action", "note": "The bias."}
+  ]
+}
+`;
+  const missing = plan.prepare(
+    { "principles:data/teaching/amazon/ownership.json": teaching },
+    [{
+      repo: "principles",
+      file: "data/teaching/amazon/ownership.json",
+      path: ["related", 0, "note"],
+      before: "The owner.",
+      after: "The owner. See {lp:deliver-results}.",
+    }],
+    { amazon: slugs }
+  );
+  assert.equal(missing.ok, false);
+  assert.match(missing.errors[0].error, /\{lp:deliver-results\} is missing from related/);
+  const listed = plan.prepare(
+    { "principles:data/teaching/amazon/ownership.json": teaching },
+    [{
+      repo: "principles",
+      file: "data/teaching/amazon/ownership.json",
+      path: ["related", 0, "note"],
+      before: "The owner.",
+      after: "The owner. See {lp:bias-for-action}.",
+    }],
+    { amazon: slugs }
+  );
+  assert.equal(listed.ok, true, JSON.stringify(listed.errors));
+});
+
+test("a principle link in a further reading note must be listed in related", () => {
+  const slugs = ["ownership", "bias-for-action", "deliver-results"];
+  const doc = {
+    why: ["No link here."],
+    related: [
+      { id: "ownership", note: "The owner." },
+      { id: "bias-for-action", note: "The bias." },
+    ],
+    blog: [{
+      title: "A note",
+      url: "https://blog.kindel.com/x/",
+      note: "See {lp:deliver-results}.",
+    }],
+  };
+  assert.match(rules.teachingLinks(doc, slugs, true)[0], /\{lp:deliver-results\} is missing from related/);
+  doc.blog[0].note = "See {lp:ownership}.";
+  assert.deepEqual(rules.teachingLinks(doc, slugs, true), []);
+});
+
 test("a teaching link must resolve and be listed in related", () => {
   const doc = {
     why: ["See {lp:ownership}."],
