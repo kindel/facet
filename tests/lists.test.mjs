@@ -221,6 +221,32 @@ test("an essay permalink has to use the kindel essays path", () => {
   assert.match(byId.join("\n"), /essays\/the-5-ps-achieving-focus-in-any-endeavor/);
 });
 
+test("an existing essay permalink does not block a new reading link", () => {
+  const before = teaching(8).replace(
+    "https://kindel.com/a",
+    "https://blog.kindel.com/" + "2019/05/30/focusing-on-users-is-not-customer-obsession/"
+  );
+  const prepared = plan.prepare(
+    { "principles:data/teaching/generic/ownership.json": before },
+    [{
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/generic/ownership.json",
+      path: ["blog"],
+      index: 1,
+      seq: 1,
+      value: { title: "More", url: "https://kindel.com/b", note: "A second note." },
+      label: "More",
+      field: "added",
+      company: "generic",
+      companyName: "Universal Leadership Principles",
+      principleName: "Ownership",
+    }],
+    slugs
+  );
+  assert.equal(prepared.ok, true, JSON.stringify(prepared.errors));
+});
+
 test("removing a teaching record also has to clear its catalog entry", () => {
   const catalog = JSON.stringify({
     principles: [{ id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" }],
