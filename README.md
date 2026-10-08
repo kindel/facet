@@ -12,7 +12,7 @@ This repo ships `card.json` and `icon.png` as the listing for any host (kindel.c
 
 The page layout is `layouts/page/facet.html`. The host content file sets `layout: facet` and does not add an intro. `js/facet.js` and `css/facet.css` are the list and the editor. A row is the situation, or the question on one line. The full text is only in the editor.
 
-`lib/` is the patch, the allowlist, and the abuse caps (`allow.js`, `patch.js`, `plan.js`, `rules.js`, `guard.js`). The host's save function runs these files on the server. It does not trust the browser.
+`lib/` is the patch, the allowlist, and the abuse caps (`allow.js`, `patch.js`, `plan.js`, `rules.js`, `guard.js`). The host's save function runs these files on the server. It does not trust the browser. A list can gain an entry, lose one, or reorder one. The patch keeps the file's indent and commas. Teaching records can be added or removed. Principles and companies cannot.
 
 Principle text stays in [kindel/principles](https://github.com/kindel/principles). BIQ question text stays in [kindel/biq](https://github.com/kindel/biq). Questions that make a principle concrete are the `deepen` list in a teaching file. This repo does not copy those sets.
 

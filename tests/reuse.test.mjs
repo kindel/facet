@@ -55,6 +55,33 @@ const edit = {
   principleName: "Invent and Simplify",
 };
 
+test("a reused concrete question delete is copied onto every matching file", () => {
+  const result = reuse.expand([Object.assign({}, edit, {
+    op: "remove",
+    path: ["deepen"],
+    index: 1,
+    before: BEFORE,
+    after: undefined,
+  })], index, maps, filesFor(BEFORE));
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.changes.length, 2);
+  assert.equal(result.changes[1].op, "remove");
+  assert.equal(result.changes[1].file, "data/teaching/generic/invent-and-simplify.json");
+  assert.equal(result.changes[1].before, BEFORE);
+  assert.equal(result.changes[1].index, 1);
+});
+
+test("a reused list that already differs is refused", () => {
+  const result = reuse.expand([Object.assign({}, edit, {
+    op: "remove",
+    path: ["deepen"],
+    index: 1,
+    before: BEFORE,
+  })], index, maps, filesFor("A different question?"));
+  assert.equal(result.ok, false);
+  assert.match(result.error, /already differs/);
+});
+
 test("a shared concrete question is copied onto the reused teaching file", () => {
   const result = reuse.expand([edit], index, maps, filesFor(BEFORE));
   assert.equal(result.ok, true);
