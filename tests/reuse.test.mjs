@@ -1061,3 +1061,127 @@ test("a three-company reuse group keeps one copy of a shared list edit", () => {
   assert.equal(armMoves[0].op, "move");
   assert.equal(armMoves[0].to, 2);
 });
+
+test("a caller-supplied deletion of a reused file is not copied again", () => {
+  const amazon = {
+    op: "delete",
+    repo: "principles",
+    file: "data/teaching/amazon/invent-and-simplify.json",
+    path: [],
+    seq: 1,
+    company: "amazon",
+  };
+  const generic = {
+    op: "delete",
+    repo: "principles",
+    file: "data/teaching/generic/invent-and-simplify.json",
+    path: [],
+    seq: 2,
+    company: "generic",
+  };
+  const both = reuse.expand([amazon, generic], index, maps, filesFor(BEFORE));
+  assert.equal(both.ok, true, both.error);
+  assert.equal(both.changes.length, 2);
+  assert.equal(both.changes[0], amazon);
+  assert.equal(both.changes[1], generic);
+  const one = reuse.expand([amazon], index, maps, filesFor(BEFORE));
+  assert.equal(one.ok, true, one.error);
+  assert.equal(one.changes.length, 2);
+  assert.equal(one.changes[1].op, "delete");
+  assert.equal(one.changes[1].file, generic.file);
+  const grouped = {
+    companies: index.companies.concat([
+      { id: "arm", principles: [{ id: 3003, slug: "invent-and-simplify" }] },
+    ]),
+  };
+  const groupMaps = maps.concat([{
+    source: "amazon",
+    target: "arm",
+    pairs: [{ sourceSlug: "invent-and-simplify", targetIds: [3003] }],
+  }]);
+  const files = Object.assign({}, filesFor(BEFORE), {
+    "principles:data/teaching/arm/invent-and-simplify.json": teach(3003, BEFORE),
+  });
+  const third = reuse.expand([amazon, generic], grouped, groupMaps, files);
+  assert.equal(third.ok, true, third.error);
+  const armDeletes = third.changes.filter((item) => item.file.indexOf("/arm/") !== -1);
+  assert.equal(armDeletes.length, 1);
+  assert.equal(armDeletes[0].op, "delete");
+});
+
+test("a caller-supplied create of a reused file is not copied again", () => {
+  const record = { id: 1003, slug: "invent-and-simplify", why: ["Same prose."] };
+  const amazon = {
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/amazon/invent-and-simplify.json",
+    path: [],
+    seq: 1,
+    value: record,
+    company: "amazon",
+  };
+  const alone = reuse.expand([amazon], index, maps, {});
+  assert.equal(alone.ok, true, alone.error);
+  assert.equal(alone.changes.length, 2);
+  const generic = {
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/generic/invent-and-simplify.json",
+    path: [],
+    seq: 2,
+    value: alone.changes[1].value,
+    company: "generic",
+  };
+  const both = reuse.expand([amazon, generic], index, maps, {});
+  assert.equal(both.ok, true, both.error);
+  assert.equal(both.changes.length, 2);
+  assert.equal(both.changes[0], amazon);
+  assert.equal(both.changes[1], generic);
+  const grouped = {
+    companies: index.companies.concat([
+      { id: "arm", principles: [{ id: 3003, slug: "invent-and-simplify" }] },
+    ]),
+  };
+  const groupMaps = maps.concat([{
+    source: "amazon",
+    target: "arm",
+    pairs: [{ sourceSlug: "invent-and-simplify", targetIds: [3003] }],
+  }]);
+  const third = reuse.expand([amazon, generic], grouped, groupMaps, {});
+  assert.equal(third.ok, true, third.error);
+  const armCreates = third.changes.filter((item) => item.file.indexOf("/arm/") !== -1);
+  assert.equal(armCreates.length, 1);
+  assert.equal(armCreates[0].op, "create");
+  assert.equal(armCreates[0].value.id, 3003);
+  const catalog = {
+    title: "Notes",
+    principles: [{ id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" }],
+  };
+  const amazonCatalog = {
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: [],
+    seq: 3,
+    value: catalog,
+    company: "amazon",
+  };
+  const catalogAlone = reuse.expand([amazonCatalog], index, maps, {});
+  assert.equal(catalogAlone.ok, true, catalogAlone.error);
+  assert.equal(catalogAlone.changes.length, 2);
+  assert.equal(catalogAlone.changes[1].op, "create");
+  const genericCatalog = {
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: [],
+    seq: 4,
+    value: catalogAlone.changes[1].value,
+    company: "generic",
+  };
+  const catalogs = reuse.expand([amazonCatalog, genericCatalog], index, maps, {});
+  assert.equal(catalogs.ok, true, catalogs.error);
+  assert.equal(catalogs.changes.length, 2);
+  assert.equal(catalogs.changes[0], amazonCatalog);
+  assert.equal(catalogs.changes[1], genericCatalog);
+});
