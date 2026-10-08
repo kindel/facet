@@ -101,6 +101,28 @@ test("allowlist rejects new files, traversal, and fields the schema does not edi
   });
 });
 
+test("generic calibration rows cannot change in count", () => {
+  const insert = {
+    op: "insert",
+    repo: "principles",
+    file: "data/generic/ownership.json",
+    path: ["rows"],
+    index: 0,
+    value: {
+      id: "the-work",
+      situation: "The work",
+      under: "Does less.",
+      justRight: "Does the job.",
+      over: "Does every job.",
+    },
+  };
+  assert.equal(allow.assess(insert).ok, false);
+  assert.match(allow.assess(insert).error, /cannot be changed/);
+  assert.equal(allow.assess(Object.assign({}, insert, { op: "remove", before: insert.value })).ok, false);
+  assert.equal(allow.assess(Object.assign({}, insert, { file: "data/amazon/ownership.json" })).ok, true);
+  assert.equal(allow.assess(Object.assign({}, insert, { file: "data/dawn/ownership.json" })).ok, true);
+});
+
 test("inherited names are not company ids", () => {
   const names = ["constructor", "__proto__", "toString", "hasOwnProperty"];
   names.forEach((name) => {

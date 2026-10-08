@@ -2661,6 +2661,7 @@
         if (!S.files["principles:" + file]) return;
         var path = ["rows"];
         var meta = S.byId[pr.id] || {};
+        if (unpublished(co.id)) return;
         pushList({
           key: listKey("principles", file, path),
           repo: "principles",
@@ -3965,6 +3966,9 @@
         over: String(fields.over).trim(),
       };
       if (draft.mode === "facetRow") value.words = "generated";
+      if (draft.mode === "row" && existing.length && existing.every(function (row) {
+        return row && Object.prototype.hasOwnProperty.call(row, "words");
+      })) value.words = "authored";
       label = value.situation;
     }
     var change = queueInsert(draft, value, label);

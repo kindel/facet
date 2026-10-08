@@ -270,11 +270,27 @@ test("removing a teaching record also has to clear its catalog entry", () => {
     file: record,
     path: [],
   };
-  assert.match(guard.review(before, before, [removal]).join("\n"), /still leaves it in the teaching catalog/);
+  assert.match(guard.review(before, before, [removal]).join("\n"), /needs its teaching catalog/);
   assert.match(guard.review({}, {}, [removal]).join("\n"), /needs its teaching catalog/);
+  const catalogTouch = {
+    op: "replace",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["title"],
+    before: "Teaching",
+    after: "Teaching.",
+  };
+  assert.match(guard.review(before, before, [removal, catalogTouch]).join("\n"), /still leaves it in the teaching catalog/);
   const cleared = guard.review(before, Object.assign({}, before, {
     "principles:data/teaching/generic/index.json": JSON.stringify({ principles: [{ id: 8001, slug: "ownership", file: "ownership.json" }] }),
-  }), [removal]);
+  }), [removal, {
+    op: "remove",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 0,
+    before: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+  }]);
   assert.equal(cleared.length, 0);
   const dropped = guard.review(before, {}, [removal, {
     op: "delete",
@@ -332,6 +348,7 @@ test("a new BIQ question is accepted with its stub pack", () => {
   });
   const mismatch = guard.review({ "biq:data/questions.json": before }, wrong, [
     { repo: "biq", file: "data/questions.json", op: "insert", path: ["companies", { id: "amazon" }, "principles", { id: 1001 }, "questions"], index: 1 },
+    { repo: "biq", file: "data/examples/abc12345.json", op: "create", path: [], value: { principle_id: 1002, principle: "Ownership", question: added.text } },
   ]);
   assert.match(mismatch.join("\n"), /different principle/);
 });
@@ -1167,4 +1184,171 @@ test("a principle row id cannot be reused", () => {
   assert.match(duplicate.errors[0].error, /Row id knowing-what-you-own is already used/);
   const distinct = insert("second-row");
   assert.equal(distinct.ok, true, JSON.stringify(distinct.errors));
+});
+
+test("a question id cannot move onto another principle", () => {
+  const before = JSON.stringify({
+    companies: [{
+      id: "amazon",
+      name: "Amazon",
+      examples: true,
+      principles: [
+        { id: 1001, name: "Customer Obsession", questions: [{ id: "abcd1234", text: "Tell me?" }, { id: "cccc3333", text: "Another?" }] },
+        { id: 1002, name: "Ownership", questions: [{ id: "bbbb2222", text: "Who owns this?" }] },
+      ],
+    }],
+  });
+  const after = JSON.stringify({
+    companies: [{
+      id: "amazon",
+      name: "Amazon",
+      examples: true,
+      principles: [
+        { id: 1001, name: "Customer Obsession", questions: [{ id: "cccc3333", text: "Another?" }] },
+        { id: 1002, name: "Ownership", questions: [{ id: "bbbb2222", text: "Who owns this?" }, { id: "abcd1234", text: "Tell me?" }] },
+      ],
+    }],
+  });
+  const errors = guard.review(
+    { "biq:data/questions.json": before },
+    { "biq:data/questions.json": after, "biq:data/examples/abcd1234.json": JSON.stringify({ principle_id: 1002, question: "Tell me?" }) },
+    [
+      { repo: "biq", file: "data/questions.json", op: "remove", path: ["companies", { id: "amazon" }, "principles", { id: 1001 }, "questions"], index: 0 },
+      { repo: "biq", file: "data/questions.json", op: "insert", path: ["companies", { id: "amazon" }, "principles", { id: 1002 }, "questions"], index: 1, value: { id: "abcd1234", text: "Tell me?" } },
+    ]
+  );
+  assert.match(errors.join("\n"), /abcd1234 already belongs to a different principle/);
+});
+
+test("a support file is not a saved example pack", () => {
+  const bank = JSON.stringify({
+    companies: [{ id: "amazon", name: "Amazon", examples: true, principles: [{ id: 1001, name: "Customer Obsession", questions: [{ id: "f76d64d6", text: "Tell me?", manager: false }] }] }],
+  }, null, 2) + "\n";
+  const added = { text: "Who changed the plan?", manager: false, id: "abc12345" };
+  const prepared = plan.prepare({
+    "biq:data/questions.json": bank,
+    "biq:data/examples/abc12345.json": JSON.stringify({ principle_id: 1001, principle: "Customer Obsession", question: added.text }, null, 2) + "\n",
+  }, [{
+    op: "insert",
+    repo: "biq",
+    file: "data/questions.json",
+    path: ["companies", { id: "amazon" }, "principles", { id: 1001 }, "questions"],
+    index: 1,
+    value: added,
+  }], {});
+  assert.equal(prepared.ok, false);
+  assert.match(prepared.errors[0].error, /example pack/);
+  const withPack = plan.prepare({
+    "biq:data/questions.json": bank,
+  }, [{
+    op: "insert",
+    repo: "biq",
+    file: "data/questions.json",
+    path: ["companies", { id: "amazon" }, "principles", { id: 1001 }, "questions"],
+    index: 1,
+    value: added,
+  }, {
+    op: "create",
+    repo: "biq",
+    file: "data/examples/abc12345.json",
+    path: [],
+    value: { principle_id: 1001, principle: "Customer Obsession", question: added.text },
+  }], {});
+  assert.equal(withPack.ok, true, JSON.stringify(withPack.errors));
+  assert.ok(withPack.files.some((file) => file.file === "data/examples/abc12345.json"));
+});
+
+test("a support catalog does not stand in for the catalog change", () => {
+  const indexText = JSON.stringify({
+    companies: [{
+      id: "generic",
+      principles: [
+        { id: 8002, slug: "ownership" },
+        { id: 8003, slug: "earn-trust" },
+        { id: 8004, slug: "deliver-results" },
+      ],
+    }],
+  });
+  const catalog = JSON.stringify({
+    principles: [{ id: 8002, slug: "ownership", file: "ownership.json" }],
+    blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+  });
+  const create = {
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/generic/ownership.json",
+    path: [],
+    value: JSON.parse(teaching(8)),
+    company: "generic",
+  };
+  const prepared = plan.prepare({
+    "principles:data/index.json": indexText,
+    "principles:data/teaching/generic/index.json": catalog,
+  }, [create], slugs);
+  assert.equal(prepared.ok, false);
+  assert.match(prepared.errors[0].error, /needs its teaching catalog/);
+  const record = "data/teaching/generic/invent-and-simplify.json";
+  const removed = plan.prepare({
+    "principles:data/teaching/generic/index.json": JSON.stringify({
+      principles: [{ id: 8001, slug: "ownership", file: "ownership.json" }],
+      blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+    }),
+    ["principles:" + record]: "{}\n",
+  }, [{
+    op: "delete",
+    repo: "principles",
+    file: record,
+    path: [],
+    company: "generic",
+  }], { generic: ["invent-and-simplify"] });
+  assert.equal(removed.ok, false);
+  assert.match(removed.errors[0].error, /needs its teaching catalog/);
+});
+
+test("calibration words stay inside quoted, authored, and generated", () => {
+  const row = {
+    id: "the-work",
+    situation: "The work",
+    under: "Does less.",
+    justRight: "Does the job.",
+    over: "Does every job.",
+    words: "borrowed",
+  };
+  assert.match(rules.checkItem(row, { item: "row" }).join("\n"), /quoted, authored, or generated/);
+  const authored = Object.assign({}, row, { words: "authored" });
+  assert.equal(rules.checkItem(authored, { item: "row" }).length, 0);
+  const unmarked = Object.assign({}, row);
+  delete unmarked.words;
+  assert.equal(rules.checkItem(unmarked, { item: "row" }).length, 0);
+  assert.match(rules.structuralShape({ rows: [row] }, "data/dawn/ownership.json", false).join("\n"), /quoted, authored, or generated/);
+  const before = JSON.stringify({
+    rows: [{
+      id: "better-than-yesterday",
+      situation: "Yesterday",
+      under: "Does less.",
+      justRight: "Does the job.",
+      over: "Does every job.",
+      words: "quoted",
+    }],
+  });
+  const insert = {
+    op: "insert",
+    repo: "principles",
+    file: "data/dawn/ownership.json",
+    path: ["rows"],
+    index: 1,
+    value: unmarked,
+  };
+  const dawnFiles = {
+    "principles:data/dawn/ownership.json": before,
+    "principles:data/facets.json": JSON.stringify({ version: 1, facets: [] }),
+  };
+  const missing = plan.prepare(dawnFiles, [insert], {});
+  assert.equal(missing.ok, false);
+  assert.match(missing.errors[0].error, /words/);
+  const marked = JSON.parse(JSON.stringify(insert));
+  marked.value = authored;
+  const saved = plan.prepare(dawnFiles, [marked], {});
+  assert.equal(saved.ok, true, JSON.stringify(saved.errors));
+  assert.match(saved.files[0].after, /"words": "authored"/);
 });

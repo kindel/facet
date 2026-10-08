@@ -73,6 +73,13 @@ function sliceBetween(source, startMark, endMark) {
   return source.slice(lineStart, end);
 }
 
+test("a marked calibration list adds an authored row, and generic stays closed", () => {
+  const page = fs.readFileSync(new URL("../js/facet.js", import.meta.url), "utf8");
+  assert.match(page, /draft\.mode === "row" && existing\.length && existing\.every/);
+  assert.match(page, /value\.words = "authored"/);
+  assert.match(page, /if \(unpublished\(co\.id\)\) return;/);
+});
+
 test("the page uses the same insert helper", () => {
   const lib = fs.readFileSync(new URL("../lib/insert.js", import.meta.url), "utf8");
   const page = fs.readFileSync(new URL("../js/facet.js", import.meta.url), "utf8");
