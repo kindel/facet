@@ -856,6 +856,88 @@ test("a new catalog does not have to match the other company's catalog", () => {
   assert.deepEqual(added.changes[1].value, { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" });
 });
 
+test("a reused list copy stays ahead of a later edit of that copy", () => {
+  const generic = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/invent-and-simplify.json",
+    path: ["deepen"],
+    index: 0,
+    seq: 1,
+    value: "First?",
+    company: "generic",
+  };
+  const amazon = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/amazon/invent-and-simplify.json",
+    path: ["deepen"],
+    index: 0,
+    seq: 2,
+    value: "Second?",
+    company: "amazon",
+  };
+  const result = reuse.expand([generic, amazon], index, maps, filesFor(BEFORE));
+  assert.equal(result.ok, true, result.error);
+  const amazonEdits = result.changes.filter((one) => one.file.indexOf("/amazon/") !== -1);
+  assert.equal(amazonEdits.length, 2);
+  assert.equal(amazonEdits[0].value, "First?");
+  assert.equal(amazonEdits[1].value, "Second?");
+  assert.ok(result.changes.indexOf(amazonEdits[0]) < result.changes.indexOf(amazon));
+});
+
+test("a reused catalog copy stays ahead of a later edit of that catalog", () => {
+  const both = {
+    companies: [
+      {
+        id: "amazon",
+        principles: [
+          { id: 1001, slug: "customer-obsession" },
+          { id: 1003, slug: "invent-and-simplify" },
+        ],
+      },
+      {
+        id: "generic",
+        principles: [
+          { id: 8001, slug: "customer-obsession" },
+          { id: 8006, slug: "invent-and-simplify" },
+        ],
+      },
+    ],
+  };
+  const generic = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 0,
+    seq: 1,
+    value: { id: 8001, slug: "customer-obsession", file: "customer-obsession.json" },
+    company: "generic",
+  };
+  const amazon = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: ["principles"],
+    index: 0,
+    seq: 2,
+    value: { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+    company: "amazon",
+  };
+  const result = reuse.expand([generic, amazon], both, maps, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({ principles: [] }),
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ principles: [] }),
+  });
+  assert.equal(result.ok, true, result.error);
+  const amazonEdits = result.changes.filter((one) => one.file.indexOf("/amazon/") !== -1);
+  assert.equal(amazonEdits.length, 2);
+  assert.equal(amazonEdits[0].value.slug, "customer-obsession");
+  assert.equal(amazonEdits[0].value.id, 1001);
+  assert.equal(amazonEdits[1].value.slug, "invent-and-simplify");
+  assert.ok(result.changes.indexOf(amazonEdits[0]) < result.changes.indexOf(amazon));
+});
+
 test("two agreeing edits of the same reused field stay as the caller sent them", () => {
   const generic = Object.assign({}, edit, {
     file: "data/teaching/generic/invent-and-simplify.json",
