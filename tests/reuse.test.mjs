@@ -1450,3 +1450,31 @@ test("a caller-supplied create of a reused file is not copied again", () => {
   assert.equal(catalogs.changes[0], amazonCatalog);
   assert.equal(catalogs.changes[1], genericCatalog);
 });
+
+test("projection counts repeated structural edits and keeps one replacement per path", () => {
+  const file = "data/teaching/amazon/invent-and-simplify.json";
+  const inserts = [1, 2].map((seq) => ({
+    op: "insert",
+    repo: "principles",
+    file: file,
+    path: ["deepen"],
+    index: 1,
+    seq: seq,
+    value: "Another question?",
+  }));
+  const projected = reuse.project(inserts, index, maps);
+  assert.equal(projected.changes, 4);
+  assert.equal(projected.files, 2);
+  const repeated = reuse.project([inserts[0], Object.assign({}, inserts[0])], index, maps);
+  assert.equal(repeated.changes, 2);
+  const replacements = [1, 2].map(() => ({
+    repo: "principles",
+    file: file,
+    path: ["deepen", 1],
+    before: BEFORE,
+    after: AFTER,
+  }));
+  const replaced = reuse.project(replacements, index, maps);
+  assert.equal(replaced.changes, 2);
+  assert.equal(replaced.files, 2);
+});

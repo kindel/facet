@@ -245,6 +245,42 @@ test("an essay permalink has to use the kindel essays path", () => {
   assert.match(rules.essayUrlError(dated + "constructor/", { constructor: "constructor" }), /essays\/constructor/);
 });
 
+test("a new essay link has to be the catalog URL exactly", () => {
+  const canonical = "https://kindel.com/essays/tenets/";
+  assert.equal(rules.essayUrlError(canonical), "");
+  assert.equal(rules.essayUrlError(canonical, ["tenets"]), "");
+  assert.equal(rules.essayUrlError(canonical, { tenets: "tenets" }), "");
+  assert.equal(rules.essayUrlError("https://kindel.com/essays/tenets"), "This essay has to use https://kindel.com/essays/tenets/.");
+  assert.equal(rules.essayUrlError(" " + canonical), "This essay has to use https://kindel.com/essays/tenets/.");
+  assert.equal(rules.essayUrlError(canonical + " "), "This essay has to use https://kindel.com/essays/tenets/.");
+  assert.equal(rules.essayUrlError("https://www.kindel.com/essays/tenets/"), "This essay has to use https://kindel.com/essays/tenets/.");
+  assert.equal(rules.essayUrlError("https://kindel.com./essays/tenets/"), "This essay has to use https://kindel.com/essays/tenets/.");
+  assert.equal(rules.essayUrlError("https://kindel.com//essays/tenets/"), "This essay has to use https://kindel.com/essays/tenets/.");
+  assert.equal(rules.essayUrlError("https://kindel.com/essays/tenets/?utm=1"), "This essay has to use https://kindel.com/essays/tenets/.");
+  assert.equal(rules.essayUrlError("https://kindel.com/essays/not-in-catalog"), "This essay link is not in the catalog.");
+  assert.equal(rules.essayUrlError(" https://kindel.com/essays/not-in-catalog "), "This essay link is not in the catalog.");
+  assert.equal(rules.essayUrlError(canonical, ["other-slug"]), "This essay link is not in the catalog.");
+  assert.equal(rules.essayUrlError("https://kindel.com/leadership"), "");
+  const unknown = rules.checkItem({
+    title: "Missing",
+    url: "https://kindel.com/essays/not-in-catalog",
+    note: "A note.",
+  }, { item: "blog" });
+  assert.match(unknown.join("\n"), /not in the catalog/);
+  const spaced = rules.checkItem({
+    title: "Spaced",
+    url: " " + canonical + " ",
+    note: "A note.",
+  }, { item: "blog" });
+  assert.match(spaced.join("\n"), /essays\/tenets/);
+  const other = rules.checkItem({
+    title: "Other",
+    url: "https://example.com/notes",
+    note: "A note.",
+  }, { item: "blog" });
+  assert.deepEqual(other, []);
+});
+
 test("an existing essay permalink does not block a new reading link", () => {
   const before = teaching(8).replace(
     "https://kindel.com/a",
