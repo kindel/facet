@@ -430,6 +430,57 @@ test("a company id named constructor still walks the derivation map", () => {
   assert.equal(generic.after, "Ship the simpler version.");
 });
 
+test("a reused copy is grouped under the destination company and principle", () => {
+  const plan = require("../lib/plan.js");
+  const before = "Hold the bar.";
+  const named = {
+    companies: [
+      {
+        id: "amazon",
+        name: "Amazon",
+        principles: [{ id: 1007, slug: "insist-on-the-highest-standards", name: "Insist on the Highest Standards" }],
+      },
+      {
+        id: "generic",
+        name: "Universal Leadership Principles",
+        principles: [{ id: 8007, slug: "insist-on-high-standards", name: "Insist on High Standards" }],
+      },
+    ],
+  };
+  const namedMaps = [{
+    source: "generic",
+    target: "amazon",
+    pairs: [{ sourceSlug: "insist-on-high-standards", targetIds: [1007] }],
+  }];
+  const files = {
+    "principles:data/teaching/amazon/insist-on-the-highest-standards.json": JSON.stringify({ why: before }),
+    "principles:data/teaching/generic/insist-on-high-standards.json": JSON.stringify({ why: before }),
+  };
+  const change = {
+    repo: "principles",
+    file: "data/teaching/amazon/insist-on-the-highest-standards.json",
+    path: ["why"],
+    before: before,
+    after: "Hold a higher bar.",
+    label: "Hold the bar.",
+    field: "Why",
+    company: "amazon",
+    companyName: "Amazon",
+    principle: "Insist on the Highest Standards",
+    principleName: "Insist on the Highest Standards",
+  };
+  const result = reuse.expand([change], named, namedMaps, files);
+  assert.equal(result.ok, true);
+  const generic = result.changes.filter((one) => one.file.indexOf("/generic/") !== -1)[0];
+  assert.equal(generic.company, "generic");
+  assert.equal(generic.companyName, "Universal Leadership Principles");
+  assert.equal(generic.principleName, "Insist on High Standards");
+  const body = plan.pullBody(result.changes, "", "");
+  assert.match(body, /## Universal Leadership Principles\n\n### Insist on High Standards\n\n- Hold the bar\., field Why\n {2}- principles `data\/teaching\/generic\/insist-on-high-standards\.json`/);
+  assert.doesNotMatch(body, /## Generic/);
+  assert.match(body, /## Amazon\n\n### Insist on the Highest Standards/);
+});
+
 test("two agreeing edits of the same reused field stay as the caller sent them", () => {
   const generic = Object.assign({}, edit, {
     file: "data/teaching/generic/invent-and-simplify.json",
