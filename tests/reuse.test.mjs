@@ -667,10 +667,39 @@ test("a reused catalog move keeps the destination id", () => {
     }),
   });
   assert.equal(result.ok, true, result.error);
+  assert.equal(result.changes.length, 1);
+  assert.equal(result.changes[0].file, "data/teaching/generic/index.json");
+});
+
+test("a reused catalog move still retargets when the destination order differs", () => {
+  const result = reuse.expand([{
+    op: "move",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 0,
+    to: 1,
+    seq: 4,
+    before: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+    company: "generic",
+  }], index, maps, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({
+      principles: [
+        { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+        { id: 8001, slug: "customer-obsession", file: "customer-obsession.json" },
+      ],
+    }),
+    "principles:data/teaching/amazon/index.json": JSON.stringify({
+      principles: [
+        { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+        { id: 1001, slug: "customer-obsession", file: "customer-obsession.json" },
+      ],
+    }),
+  });
+  assert.equal(result.ok, true, result.error);
   const copy = result.changes[1];
   assert.equal(copy.op, "move");
-  assert.equal(copy.file, "data/teaching/amazon/index.json");
-  assert.equal(copy.index, 1);
+  assert.equal(copy.index, 0);
   assert.equal(copy.to, 1);
   assert.equal(copy.before.id, 1003);
 });

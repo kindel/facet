@@ -182,6 +182,7 @@ test("removing a facet that is still linked is refused, and so is a bare table",
     "principles:data/index.json": JSON.stringify(index),
     "biq:data/questions.json": JSON.stringify(questions),
     "principles:data/maps/generic-amazon.json": JSON.stringify(map),
+    "principles:data/maps/_list.json": JSON.stringify(["data/maps/generic-amazon.json"]),
   };
   const stripped = JSON.parse(JSON.stringify(facets));
   stripped.facets = [];
@@ -369,4 +370,114 @@ test("a stub example pack is a new file next to the question", () => {
     path: [],
     value: { principle_id: 1001, principle: "Customer Obsession", question: "Who changed the plan?" },
   }).ok, true);
+});
+
+test("a related note has to name a principle this company has", () => {
+  const prepared = plan.prepare(
+    { "principles:data/teaching/generic/ownership.json": teaching(8) },
+    [{
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/generic/ownership.json",
+      path: ["related"],
+      index: 2,
+      value: { id: "not-a-real-principle", note: "A note." },
+      company: "generic",
+    }],
+    slugs
+  );
+  assert.equal(prepared.ok, false);
+  assert.match(prepared.errors[0].error, /Unknown principle/);
+});
+
+test("a new facet row has to be a complete calibration row", () => {
+  const bad = rules.checkItem({
+    id: "thin",
+    label: "Thin",
+    principles: [1001],
+    rows: [{ id: "thin-row", words: "generated", under: "Too little." }],
+  }, { item: "facet" });
+  assert.match(bad.join("\n"), /situation/);
+});
+
+test("a new teaching record checks each entry", () => {
+  const doc = JSON.parse(teaching(8));
+  doc.examples = [{}, {}];
+  const errors = rules.structuralShape(doc, "data/teaching/generic/ownership.json", true, { slugs: slugs.generic });
+  assert.match(errors.join("\n"), /example needs a title/);
+});
+
+test("adding teaching lists the record, and a catalog entry needs the file", () => {
+  const record = teaching(8);
+  const missingCatalog = guard.review({}, {
+    "principles:data/teaching/amazon/ownership.json": record,
+  }, [{
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/amazon/ownership.json",
+    path: [],
+    value: JSON.parse(record),
+  }]);
+  assert.match(missingCatalog.join("\n"), /needs its teaching catalog/);
+  const catalog = JSON.stringify({
+    principles: [{ id: 1002, slug: "ownership", file: "ownership.json" }],
+    blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+  });
+  const missingRecord = guard.review({
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ principles: [], blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }] }),
+  }, {
+    "principles:data/teaching/amazon/index.json": catalog,
+  }, [{
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: ["principles"],
+    index: 0,
+    value: { id: 1002, slug: "ownership", file: "ownership.json" },
+  }]);
+  assert.match(missingRecord.join("\n"), /not in this save/);
+});
+
+test("an example pack has to match a question in the save", () => {
+  const bank = JSON.stringify({
+    companies: [{ id: "amazon", principles: [{ id: 1001, questions: [{ id: "f76d64d6", text: "Tell me?" }] }] }],
+  });
+  const errors = guard.review({
+    "biq:data/questions.json": bank,
+  }, {
+    "biq:data/questions.json": bank,
+    "biq:data/examples/abc12345.json": "{}\n",
+  }, [{
+    op: "create",
+    repo: "biq",
+    file: "data/examples/abc12345.json",
+    path: [],
+    value: { principle_id: 1001, principle: "Customer Obsession", question: "Who changed the plan?" },
+  }]);
+  assert.match(errors.join("\n"), /does not match a question/);
+});
+
+test("a facet change needs every map named in the repository list", () => {
+  const facets = JSON.stringify({ version: 1, facets: [] });
+  const index = JSON.stringify({ companies: [{ id: "amazon", principles: [{ id: 1002, facets: [] }] }] });
+  const questions = JSON.stringify({ companies: [{ id: "amazon", principles: [{ id: 1002, facets: [], questions: [{ text: "Tell me?" }] }] }] });
+  const errors = guard.review({
+    "principles:data/facets.json": facets,
+    "principles:data/index.json": index,
+    "biq:data/questions.json": questions,
+    "principles:data/maps/_list.json": JSON.stringify(["data/maps/generic-amazon.json", "data/maps/generic-arm.json"]),
+  }, {
+    "principles:data/facets.json": facets,
+    "principles:data/index.json": index,
+    "biq:data/questions.json": questions,
+    "principles:data/maps/_list.json": JSON.stringify(["data/maps/generic-amazon.json", "data/maps/generic-arm.json"]),
+    "principles:data/maps/generic-amazon.json": JSON.stringify({ pairs: [] }),
+  }, [{
+    op: "remove",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets"],
+    index: 0,
+  }]);
+  assert.match(errors.join("\n"), /generic-arm.json is not in this save/);
 });

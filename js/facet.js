@@ -413,7 +413,20 @@
     if (needIndex) add("principles:data/index.json");
     if (needFacets) add("principles:data/facets.json");
     if (needQuestions) add("biq:data/questions.json");
-    if (needMaps && S.maps) S.maps.forEach(function (map) { if (map && map.file) add("principles:" + map.file); });
+    if (needMaps && S.maps) {
+      var mapNames = [];
+      S.maps.forEach(function (map) {
+        if (!map || !map.file) return;
+        add("principles:" + map.file);
+        mapNames.push(map.file);
+      });
+      var structuralFacet = (changes || []).some(function (change) {
+        if (!change) return false;
+        if (change.file === "data/facets.json" && Array.isArray(change.path) && change.path.length === 1 && change.path[0] === "facets") return true;
+        return Array.isArray(change.path) && change.path.length && change.path[change.path.length - 1] === "facets";
+      });
+      if (structuralFacet) files["principles:data/maps/_list.json"] = JSON.stringify(mapNames);
+    }
     if (teachingFiles.length) {
       var indexDoc = S.files["principles:data/index.json"];
       var mapDocs = (S.maps || []).map(function (map) { return map.json; });
@@ -566,7 +579,11 @@
       if (!saved || typeof saved !== "object") continue;
       if (typeof saved.repo !== "string" || typeof saved.file !== "string" || !Array.isArray(saved.path)) continue;
       if (saved.op) {
-        if (restoreOp(saved)) n++;
+        var restoredOp = restoreOp(saved);
+        if (restoredOp) {
+          n++;
+          if (restoredOp.stale) staleN++;
+        }
         continue;
       }
       if (saved.path.length < 1 || saved.path.length > 8) continue;
@@ -672,7 +689,65 @@
     return cur;
   }
 
+  function fileSha(repo, file) {
+    var stored = S.files[repo + ":" + file];
+    return stored && stored.sha ? stored.sha : "";
+  }
+
+  function applyStructuralLocal(change) {
+    var key = change.repo + ":" + change.file;
+    if (change.op === "create") {
+      if (change.value === undefined) return;
+      keep(change.repo, change.file, JSON.stringify(change.value, null, 2) + "\n");
+      return;
+    }
+    if (change.op === "delete") {
+      delete S.files[key];
+      return;
+    }
+    var stored = S.files[key];
+    if (!stored || !stored.json) return;
+    var doc = cloneJson(stored.json);
+    var listed = dig(doc, change.path);
+    if (!Array.isArray(listed)) return;
+    if (change.op === "remove") {
+      if (typeof change.index === "number" && change.index >= 0 && change.index < listed.length) listed.splice(change.index, 1);
+    } else if (change.op === "insert") {
+      var at = typeof change.index === "number" ? change.index : listed.length;
+      if (at < 0) at = 0;
+      if (at > listed.length) at = listed.length;
+      listed.splice(at, 0, cloneJson(change.value));
+    } else if (change.op === "move") {
+      if (typeof change.index !== "number" || change.index < 0 || change.index >= listed.length) return;
+      var moved = listed.splice(change.index, 1)[0];
+      var to = typeof change.to === "number" ? change.to : 0;
+      if (to < 0) to = 0;
+      if (to > listed.length) to = listed.length;
+      listed.splice(to, 0, moved);
+    } else {
+      return;
+    }
+    stored.json = doc;
+    stored.text = JSON.stringify(doc, null, 2) + "\n";
+    gitBlobSha(stored.text).then(function (sha) { stored.sha = sha; }).catch(function () {});
+  }
+
+  function settleSaved(changes) {
+    var ordered = (changes || []).slice().sort(function (a, b) { return (a.seq || 0) - (b.seq || 0); });
+    var structural = false;
+    ordered.forEach(function (change) {
+      if (change && change.op) structural = true;
+      applyLocal(change);
+    });
+    if (structural) buildItems();
+  }
+
   function applyLocal(change) {
+    if (!change) return;
+    if (change.op === "insert" || change.op === "remove" || change.op === "move" || change.op === "create" || change.op === "delete") {
+      applyStructuralLocal(change);
+      return;
+    }
     var file = S.files[change.repo + ":" + change.file];
     if (!file || !Array.isArray(change.path)) return;
     var from = JSON.stringify(change.before);
@@ -1946,16 +2021,14 @@
           var key = pull.repoKey || String(pull.repo || "").replace(/^kindel\//, "");
           if (key) openedRepos[key] = true;
         });
-        changes.forEach(function (change) {
-          if (openedRepos[change.repo]) applyLocal(change);
-        });
+        settleSaved(changes.filter(function (change) { return openedRepos[change.repo]; }));
         dropOpened(data.opened);
         rememberPulls(data.opened);
         finishPending();
       } else if (data.pulls) {
         S.result = data;
         if (data.created) {
-          changes.forEach(applyLocal);
+          settleSaved(changes);
           changes.forEach(function (change) { delete S.pending[change.id]; });
           persistPending();
           rememberPulls(data.pulls);
@@ -2582,9 +2655,25 @@
 
   function replayItems(repo, file, path) {
     var key = listKey(repo, file, path);
-    var arr = (S.base || []).filter(function (item) {
-      return item.listPath && listKey(item.repo, item.file, item.listPath) === key;
-    }).sort(function (a, b) { return a.listIndex - b.listIndex; });
+    var byIndex = Object.create(null);
+    (S.base || []).forEach(function (item) {
+      if (!item.listPath || listKey(item.repo, item.file, item.listPath) !== key) return;
+      if (byIndex[item.listIndex]) return;
+      byIndex[item.listIndex] = item;
+    });
+    var original = originalArray(repo, file, path);
+    var arr = original.map(function (value, index) {
+      if (byIndex[index]) return byIndex[index];
+      return {
+        id: "hidden:" + index + ":" + key,
+        hidden: true,
+        listPath: path,
+        listIndex: index,
+        listValue: value,
+        repo: repo,
+        file: file,
+      };
+    });
     listOps(repo, file, path).forEach(function (op) {
       if (op.stale) return;
       if (op.op === "remove") {
@@ -2634,7 +2723,10 @@
     });
     var out = loose.slice();
     order.forEach(function (entry) {
-      replayItems(entry.repo, entry.file, entry.path).forEach(function (item) { out.push(item); });
+      replayItems(entry.repo, entry.file, entry.path).forEach(function (item) {
+        if (item.hidden) return;
+        out.push(item);
+      });
     });
     pendingList().forEach(function (change) {
       if (change.op === "create" && change.listKind !== "pack") out.push(syntheticFile(change));
@@ -2731,7 +2823,7 @@
       principle: principleName,
       principleName: principleName,
       shared: !!spec.shared,
-      sha: spec.sha || "",
+      sha: spec.sha || fileSha(spec.repo, spec.file),
       stale: false,
       listKind: spec.listKind || "",
       type: spec.type || "",
@@ -3995,6 +4087,23 @@
     var seq = typeof saved.seq === "number" ? saved.seq : nextSeq();
     var id = listKey(saved.repo, saved.file, saved.path) + "\u0000" + op + "\u0000" + seq;
     if (S.pending[id]) return false;
+    var stored = S.files[saved.repo + ":" + saved.file];
+    var stale = false;
+    if (op === "create") {
+      stale = !!stored;
+    } else if (op === "delete") {
+      stale = !stored || !!(saved.sha && stored.sha && saved.sha !== stored.sha);
+    } else if (op === "insert" || op === "remove" || op === "move") {
+      var currentSha = stored && stored.sha ? stored.sha : "";
+      if (saved.sha && currentSha && saved.sha !== currentSha) stale = true;
+      else if (op !== "insert") {
+        var listed = stored ? dig(stored.json, saved.path) : null;
+        stale = !Array.isArray(listed) || !sameJson(listed[saved.index], saved.before);
+      } else if (!saved.sha || !stored) {
+        var inserted = stored ? dig(stored.json, saved.path) : null;
+        stale = !Array.isArray(inserted) || saved.index > inserted.length;
+      }
+    }
     S.pending[id] = {
       id: id,
       op: op,
@@ -4015,7 +4124,7 @@
       principleName: saved.principleName || saved.principle || "",
       shared: !!saved.shared,
       sha: typeof saved.sha === "string" ? saved.sha : "",
-      stale: false,
+      stale: stale,
       listKind: saved.listKind || "",
       type: saved.type || "",
       itemKind: saved.itemKind || "",
@@ -4023,7 +4132,7 @@
       tags: Array.isArray(saved.tags) ? saved.tags : [],
       batch: saved.batch || "",
     };
-    return true;
+    return S.pending[id];
   }
 
   async function loadMaps() {
