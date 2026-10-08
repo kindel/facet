@@ -101,6 +101,43 @@ test("allowlist rejects new files, traversal, and fields the schema does not edi
   });
 });
 
+test("inherited names are not company ids", () => {
+  const names = ["constructor", "__proto__", "toString", "hasOwnProperty"];
+  names.forEach((name) => {
+    assert.equal(allow.assess({
+      op: "insert",
+      repo: "biq",
+      file: "data/questions.json",
+      path: ["companies", { id: name }, "principles", { id: 1001 }, "questions"],
+      index: 0,
+      value: { text: "Who?" },
+    }).ok, false, "list " + name);
+    assert.equal(allow.assess({
+      op: "insert",
+      repo: "biq",
+      file: "data/questions.json",
+      path: ["companies", { id: name }, "principles", { id: 1001 }, "facets"],
+      index: 0,
+      value: "ownership",
+    }).ok, false, "facets " + name);
+    assert.equal(allow.assess({
+      op: "create",
+      repo: "principles",
+      file: "data/teaching/" + name + "/ownership.json",
+      path: [],
+      value: { slug: "ownership", why: ["Because."] },
+    }).ok, false, "create " + name);
+  });
+  assert.equal(allow.assess({
+    op: "insert",
+    repo: "biq",
+    file: "data/questions.json",
+    path: ["companies", { id: "amazon" }, "principles", { id: 1001 }, "questions"],
+    index: 0,
+    value: { text: "Who?" },
+  }).ok, true);
+});
+
 test("generated facet rows are required, and source refs are not editable prose", () => {
   const text = `{
   "facets": [
