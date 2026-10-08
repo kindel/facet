@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 
@@ -1702,7 +1703,12 @@ test("removing a BIQ question requires a remaining complete pack", () => {
     if (pack) after["biq:data/examples/bbbb2222.json"] = JSON.stringify(pack);
     return guard.review(before, after, change).join("\n");
   }
-  assert.match(reviewPack(null), /Customer Obsession would have no question with Junior, Senior, and Exec examples/);
+  assert.match(reviewPack(null), /The example packs are not loaded, so this save cannot be checked/);
+  const emptyPack = guard.review(before, {
+    "biq:data/questions.json": JSON.stringify(afterDoc),
+    "biq:data/examples/bbbb2222.json": "",
+  }, change);
+  assert.match(emptyPack.join("\n"), /Junior, Senior, and Exec/);
   assert.match(reviewPack({ principle_id: 1001, question: "Another?" }), /Junior, Senior, and Exec/);
   const partial = completePack();
   delete partial.levels.exec;
@@ -1727,4 +1733,52 @@ test("removing a BIQ question requires a remaining complete pack", () => {
     "biq:data/questions.json": JSON.stringify(afterDoc),
     "biq:data/examples/bbbb2222.json": JSON.stringify(completePack()),
   }, change), []);
+});
+
+test("a facet removal is refused when the map list is missing or empty", () => {
+  const facets = {
+    version: 1,
+    facets: [{
+      id: "ownership",
+      label: "ownership",
+      principles: [8002],
+      rows: [{
+        id: "the-work",
+        situation: "The work",
+        under: "Does less.",
+        justRight: "Does the job.",
+        over: "Does everything.",
+        words: "generated",
+      }],
+    }],
+  };
+  const index = { companies: [{ id: "generic", principles: [{ id: 8002, slug: "ownership", facets: ["ownership"] }] }] };
+  const questions = { companies: [{ id: "generic", principles: [{ id: 8002, facets: ["ownership"], questions: [{ text: "Tell me?" }] }] }] };
+  const map = { source: "generic", target: "amazon", pairs: [] };
+  const base = {
+    "principles:data/facets.json": JSON.stringify(facets),
+    "principles:data/index.json": JSON.stringify(index),
+    "biq:data/questions.json": JSON.stringify(questions),
+    "principles:data/maps/generic-amazon.json": JSON.stringify(map),
+  };
+  const change = [{
+    op: "remove",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets"],
+    index: 0,
+  }];
+  const missing = guard.review(base, base, change).join("\n");
+  assert.match(missing, /The derivation map list is not loaded, so a facet change cannot be checked/);
+  const empty = Object.assign({}, base, {
+    "principles:data/maps/_list.json": "[]",
+  });
+  assert.match(guard.review(empty, empty, change).join("\n"), /The derivation map list is not loaded/);
+});
+
+test("the page does not invent a derivation map when the listing fails", () => {
+  const source = readFileSync(new URL("../js/facet.js", import.meta.url), "utf8");
+  assert.equal(source.includes('files.push("data/maps/generic-amazon.json")'), false);
+  assert.equal(source.includes("data/maps/_list.json"), false);
+  assert.match(source, /The derivation map list could not be loaded, so a facet change cannot be saved/);
 });

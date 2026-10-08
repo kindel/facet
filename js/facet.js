@@ -529,18 +529,10 @@
     if (needFacets) add("principles:data/facets.json");
     if (needQuestions) add("biq:data/questions.json");
     if (needMaps && S.maps) {
-      var mapNames = [];
       S.maps.forEach(function (map) {
         if (!map || !map.file) return;
         add("principles:" + map.file);
-        mapNames.push(map.file);
       });
-      var structuralFacet = (changes || []).some(function (change) {
-        if (!change) return false;
-        if (change.file === "data/facets.json" && Array.isArray(change.path) && change.path.length === 1 && change.path[0] === "facets") return true;
-        return Array.isArray(change.path) && change.path.length && change.path[change.path.length - 1] === "facets";
-      });
-      if (structuralFacet) files["principles:data/maps/_list.json"] = JSON.stringify(mapNames);
     }
     if (teachingFiles.length) {
       var indexDoc = S.files["principles:data/index.json"];
@@ -2116,6 +2108,13 @@
     if (!changes.length || hasErrors() || batchError(changes) || S.saving) return;
     S.saving = true;
     renderPending();
+    if (facetSaveNeedsMaps(changes) && (!S.maps || !S.maps.length)) {
+      S.saving = false;
+      S.result = { error: S.mapsNote || "The derivation map list could not be loaded, so a facet change cannot be saved." };
+      renderPending();
+      renderEditor();
+      return;
+    }
     var files = filesForSave(changes);
     var slugs = {};
     if (Object.keys(files).length > MAX_FILES) {
@@ -4413,22 +4412,38 @@
     return S.pending[id];
   }
 
+  function facetSaveNeedsMaps(changes) {
+    return (changes || []).some(function (change) {
+      if (!change || change.repo !== "principles") return false;
+      if (change.file === "data/facets.json" && change.op && change.op !== "replace") return true;
+      var steps = change.path || [];
+      return steps.length && steps[steps.length - 1] === "facets";
+    });
+  }
+
   async function loadMaps() {
     S.maps = [];
     S.mapsNote = "";
     var files = [];
+    var listed = false;
     try {
       var listing = await fetch("https://api.github.com/repos/kindel/principles/contents/data/maps", { cache: "no-store" });
       if (listing.ok) {
         var entries = await listing.json();
         if (Array.isArray(entries)) {
+          listed = true;
           entries.forEach(function (entry) {
-            if (entry && entry.type === "file" && /\.json$/.test(entry.name || "") && typeof entry.path === "string") files.push(entry.path);
+            if (!entry || entry.type !== "file" || entry.name === "_list.json") return;
+            if (!/\.json$/.test(entry.name || "") || typeof entry.path !== "string") return;
+            files.push(entry.path);
           });
         }
       }
     } catch (err) {}
-    if (!files.length) files.push("data/maps/generic-amazon.json");
+    if (!listed || !files.length) {
+      S.mapsNote = "The derivation map list could not be loaded, so a facet change cannot be saved.";
+      return;
+    }
     for (var i = 0; i < files.length; i++) {
       try {
         var text = await fetchText(RAW.principles + files[i]);
@@ -4436,7 +4451,10 @@
         S.maps.push({ file: files[i], json: kept.json });
       } catch (err) {}
     }
-    if (!S.maps.length) S.mapsNote = "Derivation maps are not loaded, so a facet change cannot be checked.";
+    if (S.maps.length !== files.length) {
+      S.maps = [];
+      S.mapsNote = "The derivation map list could not be loaded, so a facet change cannot be saved.";
+    }
   }
 
   async function load() {
