@@ -390,6 +390,138 @@ test("a related note has to name a principle this company has", () => {
   assert.match(prepared.errors[0].error, /Unknown principle/);
 });
 
+test("a facet id is the slug of its label and principles are numbers", () => {
+  const row = {
+    id: "the-work",
+    situation: "The work.",
+    under: "Does less.",
+    justRight: "Does the job.",
+    over: "Does every job.",
+    words: "generated",
+  };
+  const mismatch = rules.checkItem({
+    id: "not-the-label",
+    label: "Customer Obsession",
+    principles: [1001],
+    rows: [row],
+  }, { item: "facet" });
+  assert.match(mismatch.join("\n"), /slug of its label/);
+  const ampersand = rules.checkItem({
+    id: "r-and-d",
+    label: "R&D",
+    principles: [1001],
+    rows: [row],
+  }, { item: "facet" });
+  assert.equal(ampersand.join("\n"), "");
+  const strings = rules.checkItem({
+    id: "ownership",
+    label: "Ownership",
+    principles: ["1002"],
+    rows: [row],
+  }, { item: "facet" });
+  assert.match(strings.join("\n"), /numeric id/);
+});
+
+test("a string principle id does not satisfy the facet list", () => {
+  const row = {
+    id: "the-work",
+    situation: "The work.",
+    under: "Does less.",
+    justRight: "Does the job.",
+    over: "Does every job.",
+    words: "generated",
+  };
+  const facets = JSON.stringify({
+    version: 1,
+    facets: [{ id: "ownership", label: "Ownership", principles: ["1002"], rows: [row] }],
+  });
+  const index = JSON.stringify({ companies: [{ id: "amazon", principles: [{ id: 1002, facets: ["ownership"] }] }] });
+  const questions = JSON.stringify({ companies: [{ id: "amazon", principles: [{ id: 1002, facets: ["ownership"], questions: [{ text: "Tell me?" }] }] }] });
+  const map = JSON.stringify({ pairs: [{ sourceId: 1002, facets: ["ownership"] }] });
+  const files = {
+    "principles:data/facets.json": facets,
+    "principles:data/index.json": index,
+    "biq:data/questions.json": questions,
+    "principles:data/maps/generic-amazon.json": map,
+    "principles:data/maps/_list.json": JSON.stringify(["data/maps/generic-amazon.json"]),
+  };
+  const errors = guard.review(files, files, [{
+    op: "insert",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets"],
+    index: 1,
+  }]);
+  assert.match(errors.join("\n"), /does not match the index/);
+});
+
+test("a removed facet cannot stay in the question bank facet map", () => {
+  const row = {
+    id: "the-work",
+    situation: "The work.",
+    under: "Does less.",
+    justRight: "Does the job.",
+    over: "Does every job.",
+    words: "generated",
+  };
+  const beforeFacets = {
+    version: 1,
+    facets: [
+      { id: "ownership", label: "Ownership", principles: [1002], rows: [row] },
+      { id: "other", label: "Other", principles: [1002], rows: [row] },
+    ],
+  };
+  const afterFacets = { version: 1, facets: [beforeFacets.facets[1]] };
+  const index = JSON.stringify({ companies: [{ id: "amazon", principles: [{ id: 1002, facets: ["other"] }] }] });
+  const questions = JSON.stringify({
+    companies: [{ id: "amazon", principles: [{ id: 1002, facets: ["other"], questions: [{ text: "Tell me?" }] }] }],
+    facetQuestions: { ownership: ["abcd1234"] },
+  });
+  const map = JSON.stringify({ pairs: [{ sourceId: 1002, facets: ["other"] }] });
+  const before = {
+    "principles:data/facets.json": JSON.stringify(beforeFacets),
+    "principles:data/index.json": index,
+    "biq:data/questions.json": questions,
+    "principles:data/maps/generic-amazon.json": map,
+    "principles:data/maps/_list.json": JSON.stringify(["data/maps/generic-amazon.json"]),
+  };
+  const errors = guard.review(before, Object.assign({}, before, {
+    "principles:data/facets.json": JSON.stringify(afterFacets),
+  }), [{
+    op: "remove",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets"],
+    index: 0,
+  }]);
+  assert.match(errors.join("\n"), /still referenced by facet questions/);
+});
+
+test("a new teaching catalog checks each entry and each new reading link", () => {
+  const essay = "https://blog.kindel.com/" + "2024/07/23/how-to-write-a-working-backwards-doc/";
+  const emptyEntry = rules.structuralShape({
+    principles: [{}],
+    blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+  }, "data/teaching/amazon/index.json", true);
+  assert.match(emptyEntry.join("\n"), /numeric id/);
+  const dated = rules.structuralShape({
+    principles: [{ id: 1002, slug: "ownership", file: "ownership.json" }],
+    blog: [{ title: "Working Backwards", url: essay, note: "A note." }],
+  }, "data/teaching/amazon/index.json", true);
+  assert.match(dated.join("\n"), /kindel\.com\/essays\//);
+  const kept = rules.structuralShape({
+    principles: [{}],
+    blog: [{ title: "Working Backwards", url: essay, note: "A note." }],
+  }, "data/teaching/amazon/index.json", false);
+  assert.equal(kept.join("\n").indexOf("numeric id"), -1);
+  assert.equal(kept.join("\n").indexOf("kindel.com/essays"), -1);
+  const ok = rules.structuralShape({
+    principles: [{ id: 1002, slug: "ownership", file: "ownership.json" }],
+    blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+  }, "data/teaching/amazon/index.json", true);
+  assert.equal(ok.length, 0);
+});
+
 test("a new facet row has to be a complete calibration row", () => {
   const bad = rules.checkItem({
     id: "thin",

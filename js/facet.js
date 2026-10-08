@@ -2360,7 +2360,7 @@
   }
 
   function slugify(text) {
-    return String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    return String(text || "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   }
 
   function uniqueRowId(base, used) {

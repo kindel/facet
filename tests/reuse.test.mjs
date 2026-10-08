@@ -856,6 +856,59 @@ test("a new catalog does not have to match the other company's catalog", () => {
   assert.deepEqual(added.changes[1].value, { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" });
 });
 
+test("the same list edit sent for both companies is not copied twice", () => {
+  const generic = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/invent-and-simplify.json",
+    path: ["deepen"],
+    index: 0,
+    seq: 1,
+    value: "First?",
+    company: "generic",
+  };
+  const amazon = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/amazon/invent-and-simplify.json",
+    path: ["deepen"],
+    index: 0,
+    seq: 2,
+    value: "First?",
+    company: "amazon",
+  };
+  const result = reuse.expand([generic, amazon], index, maps, filesFor(BEFORE));
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.changes.length, 2);
+  const catalog = reuse.expand([
+    {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["principles"],
+      index: 0,
+      seq: 1,
+      value: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+      company: "generic",
+    },
+    {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/amazon/index.json",
+      path: ["principles"],
+      index: 0,
+      seq: 2,
+      value: { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+      company: "amazon",
+    },
+  ], index, maps, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({ principles: [] }),
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ principles: [] }),
+  });
+  assert.equal(catalog.ok, true, catalog.error);
+  assert.equal(catalog.changes.length, 2);
+});
+
 test("a reused list copy stays ahead of a later edit of that copy", () => {
   const generic = {
     op: "insert",
