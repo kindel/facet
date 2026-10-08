@@ -1635,10 +1635,12 @@
   }
 
   function applyNarrow() {
+    var was = S.narrow;
     S.narrow = window.matchMedia("(max-width: 800px)").matches;
     var app = document.getElementById("ed-app");
     if (!app) return;
     app.classList.toggle("is-detail", S.narrow && (!!S.filters.item || !!S.draft));
+    if (was !== S.narrow && document.getElementById("ed-editor")) renderEditor();
   }
 
   function paint() {
@@ -3417,6 +3419,23 @@
       var qBatch = "question:" + nextSeq();
       var qChange = queueInsert(draft, value, label, qBatch);
       if (!qChange) return;
+      var ownerPr = null;
+      var bank = S.files["biq:data/questions.json"];
+      if (bank) {
+        (bank.json.companies || []).forEach(function (co) {
+          if (co.id !== draft.companyId) return;
+          (co.principles || []).forEach(function (pr) {
+            if (pr.id === draft.principleId) ownerPr = pr;
+          });
+        });
+      }
+      inheritorTags((ownerPr && ownerPr.facets) || [], draft.companyId, draft.principleId).forEach(function (tag) {
+        qChange.tags.push(tag);
+      });
+      qChange.tags.sort(function (a, b) {
+        if (a.companyIndex !== b.companyIndex) return a.companyIndex - b.companyIndex;
+        return a.sort - b.sort;
+      });
       if (companyExamples(draft.companyId)) {
         queueOp({
           op: "create",
@@ -3473,6 +3492,30 @@
     S.draft = null;
     S.filters.item = "pending:" + change.id;
     S.filters.type = draft.type && draft.type !== "all" ? draft.type : S.filters.type;
+  }
+
+  function inheritorTags(facets, ownerCompanyId, ownerPrincipleId) {
+    var tags = [];
+    var bank = S.files["biq:data/questions.json"];
+    if (!bank) return tags;
+    (bank.json.companies || []).forEach(function (co) {
+      (co.principles || []).forEach(function (pr) {
+        if (co.id === ownerCompanyId && pr.id === ownerPrincipleId) return;
+        if ((pr.questions || []).length) return;
+        var share = (pr.facets || []).some(function (facet) { return facets.indexOf(facet) !== -1; });
+        if (!share) return;
+        var meta = S.byId[pr.id] || {};
+        tags.push({
+          companyId: co.id,
+          companyName: co.name,
+          companyIndex: meta.companyIndex == null ? 99 : meta.companyIndex,
+          principleId: pr.id,
+          principleName: pr.name,
+          sort: meta.sort == null ? 999 : meta.sort,
+        });
+      });
+    });
+    return tags;
   }
 
   function freshQuestionId() {
