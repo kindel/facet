@@ -397,6 +397,39 @@ test("a chain of maps rewrites the slug through the shared source", () => {
   assert.equal(arm.after, "Read {lp:high-bar}.");
 });
 
+test("a company id named constructor still walks the derivation map", () => {
+  const sentence = "Ship the simple version.";
+  const ctorIndex = {
+    companies: [
+      { id: "constructor", principles: [{ id: 1, slug: "deliver-results" }] },
+      { id: "generic", principles: [{ id: 2, slug: "deliver-results" }] },
+    ],
+  };
+  const ctorMaps = [{
+    source: "generic",
+    target: "constructor",
+    pairs: [{ sourceSlug: "deliver-results", targetIds: [1] }],
+  }];
+  const files = {
+    "principles:data/teaching/constructor/deliver-results.json": JSON.stringify({ why: sentence }),
+    "principles:data/teaching/generic/deliver-results.json": JSON.stringify({ why: sentence }),
+  };
+  const change = {
+    repo: "principles",
+    file: "data/teaching/constructor/deliver-results.json",
+    path: ["why"],
+    before: sentence,
+    after: "Ship the simpler version.",
+    company: "constructor",
+  };
+  const result = reuse.expand([change], ctorIndex, ctorMaps, files);
+  assert.equal(result.ok, true);
+  assert.equal(result.changes.length, 2);
+  const generic = result.changes.filter((one) => one.file.indexOf("/generic/") !== -1)[0];
+  assert.equal(generic.before, sentence);
+  assert.equal(generic.after, "Ship the simpler version.");
+});
+
 test("two agreeing edits of the same reused field stay as the caller sent them", () => {
   const generic = Object.assign({}, edit, {
     file: "data/teaching/generic/invent-and-simplify.json",
