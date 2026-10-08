@@ -398,6 +398,7 @@
     var needMaps = false;
     var needQuestions = false;
     var needFacets = false;
+    var needRowRefs = false;
     var teachingFiles = [];
     function addSourceRecords(value) {
       if (!value || typeof value !== "object") return;
@@ -460,7 +461,24 @@
       if (teachingChange || facetChange) needMaps = true;
       if (change.repo === "biq" || facetChange) needQuestions = true;
       if (facetChange) needFacets = true;
+      if (
+        change.repo === "principles" &&
+        (change.op === "insert" || change.op === "remove" || change.op === "move") &&
+        Array.isArray(change.path) && change.path.length === 1 && change.path[0] === "rows" &&
+        typeof change.file === "string" &&
+        change.file.indexOf("data/teaching/") !== 0 &&
+        change.file.indexOf("data/maps/") !== 0 &&
+        /^data\/[a-z0-9-]+\/[a-z0-9-]+\.json$/.test(change.file)
+      ) needRowRefs = true;
     });
+    if (needRowRefs) {
+      needFacets = true;
+      var rowFacetFile = S.files["principles:data/facets.json"];
+      var rowFacetList = rowFacetFile && rowFacetFile.json && rowFacetFile.json.facets;
+      (Array.isArray(rowFacetList) ? rowFacetList : []).forEach(function (facet) {
+        addSourceRecords(facet);
+      });
+    }
     if (needIndex) add("principles:data/index.json");
     if (needFacets) add("principles:data/facets.json");
     if (needQuestions) add("biq:data/questions.json");

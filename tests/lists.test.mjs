@@ -1061,3 +1061,110 @@ test("facet questions keep a principle covered when its stored list is empty", (
   );
   assert.match(errors.join("\n"), /Customer Obsession would have no BIQ question/);
 });
+
+test("removing a calibration row a facet names is refused", () => {
+  const kept = {
+    id: "knowing-what-you-own",
+    situation: "The work",
+    under: "Does less.",
+    justRight: "Does the job.",
+    over: "Does every job.",
+  };
+  const other = {
+    id: "second-row",
+    situation: "The other work",
+    under: "Does less.",
+    justRight: "Does the job.",
+    over: "Does every job.",
+  };
+  const record = { id: 1002, rows: [kept, other] };
+  const facets = {
+    version: 1,
+    facets: [{
+      id: "ownership",
+      label: "ownership",
+      principles: [1002],
+      rows: [
+        { principle: 1002, id: "knowing-what-you-own" },
+        {
+          id: "the-work",
+          situation: "The work",
+          under: "Does less.",
+          justRight: "Does the job.",
+          over: "Does every job.",
+          words: "generated",
+        },
+      ],
+    }],
+  };
+  function removeRow(index, before) {
+    return {
+      op: "remove",
+      repo: "principles",
+      file: "data/amazon/ownership.json",
+      path: ["rows"],
+      index: index,
+      before: before,
+    };
+  }
+  const named = plan.prepare({
+    "principles:data/amazon/ownership.json": JSON.stringify(record),
+    "principles:data/facets.json": JSON.stringify(facets),
+  }, [removeRow(0, kept)]);
+  assert.equal(named.ok, false);
+  assert.match(named.errors[0].error, /does not match a row/);
+  const missingMap = plan.prepare({
+    "principles:data/amazon/ownership.json": JSON.stringify(record),
+  }, [removeRow(1, other)]);
+  assert.equal(missingMap.ok, false);
+  assert.match(missingMap.errors[0].error, /facet map is not loaded/);
+  const otherFacets = JSON.parse(JSON.stringify(facets));
+  otherFacets.facets[0].rows[0] = { principle: 1001, id: "knowing-what-you-own" };
+  const unloaded = plan.prepare({
+    "principles:data/amazon/ownership.json": JSON.stringify(record),
+    "principles:data/facets.json": JSON.stringify(otherFacets),
+  }, [removeRow(1, other)]);
+  assert.equal(unloaded.ok, false);
+  assert.match(unloaded.errors[0].error, /not loaded/);
+  const stillNamed = plan.prepare({
+    "principles:data/amazon/ownership.json": JSON.stringify(record),
+    "principles:data/facets.json": JSON.stringify(facets),
+  }, [removeRow(1, other)]);
+  assert.equal(stillNamed.ok, true, JSON.stringify(stillNamed.errors));
+});
+
+test("a principle row id cannot be reused", () => {
+  const row = {
+    id: "knowing-what-you-own",
+    situation: "The work",
+    under: "Does less.",
+    justRight: "Does the job.",
+    over: "Does every job.",
+  };
+  const record = { id: 1002, rows: [row] };
+  const files = {
+    "principles:data/amazon/ownership.json": JSON.stringify(record),
+    "principles:data/facets.json": JSON.stringify({ version: 1, facets: [] }),
+  };
+  function insert(id) {
+    return plan.prepare(files, [{
+      op: "insert",
+      repo: "principles",
+      file: "data/amazon/ownership.json",
+      path: ["rows"],
+      index: 1,
+      value: {
+        id: id,
+        situation: "Another situation",
+        under: "Does less.",
+        justRight: "Does the job.",
+        over: "Does every job.",
+      },
+    }]);
+  }
+  const duplicate = insert("knowing-what-you-own");
+  assert.equal(duplicate.ok, false);
+  assert.match(duplicate.errors[0].error, /Row id knowing-what-you-own is already used/);
+  const distinct = insert("second-row");
+  assert.equal(distinct.ok, true, JSON.stringify(distinct.errors));
+});

@@ -269,6 +269,124 @@ test("a later caller copy is applied before the next edit of that list", () => {
   assert.match(refused.error, /already differs/);
 });
 
+test("a later caller catalog copy is applied before the next catalog insert", () => {
+  const both = {
+    companies: [
+      {
+        id: "amazon",
+        principles: [
+          { id: 1001, slug: "customer-obsession" },
+          { id: 1003, slug: "invent-and-simplify" },
+        ],
+      },
+      {
+        id: "generic",
+        principles: [
+          { id: 8001, slug: "customer-obsession" },
+          { id: 8006, slug: "invent-and-simplify" },
+        ],
+      },
+    ],
+  };
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({
+      principles: [{ id: 1014, slug: "deliver-results", file: "deliver-results.json" }],
+    }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({
+      principles: [{ id: 8014, slug: "deliver-results", file: "deliver-results.json" }],
+    }),
+  };
+  const first = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: ["principles"],
+    index: 0,
+    seq: 1,
+    value: { id: 1001, slug: "customer-obsession", file: "customer-obsession.json" },
+    company: "amazon",
+  };
+  const second = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: ["principles"],
+    index: 0,
+    seq: 2,
+    value: { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+    company: "amazon",
+  };
+  const generic = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 0,
+    seq: 3,
+    value: { id: 8001, slug: "customer-obsession", file: "customer-obsession.json" },
+    company: "generic",
+  };
+  const result = reuse.expand([first, second, generic], both, maps, files);
+  assert.equal(result.ok, true, result.error);
+  const genericEdits = result.changes.filter((one) => one.file.indexOf("/generic/") !== -1);
+  assert.equal(genericEdits.length, 2);
+  assert.equal(genericEdits[0], generic);
+  assert.equal(genericEdits[0].value.slug, "customer-obsession");
+  assert.equal(genericEdits[1].value.slug, "invent-and-simplify");
+  assert.equal(genericEdits[1].value.id, 8006);
+  assert.equal(genericEdits[1].index, 0);
+  assert.ok(result.changes.indexOf(generic) < result.changes.indexOf(second));
+  assert.ok(result.changes.indexOf(generic) < result.changes.indexOf(genericEdits[1]));
+});
+
+test("the same list edit is refused when the sibling list already differs", () => {
+  const amazon = JSON.stringify({ id: 1003, slug: "invent-and-simplify", deepen: ["A", "B", "C"] });
+  const different = JSON.stringify({ id: 8006, slug: "invent-and-simplify", deepen: ["A", "DIFFERENT", "C"] });
+  const matched = JSON.stringify({ id: 8006, slug: "invent-and-simplify", deepen: ["A", "B", "C"] });
+  function pair(op, extra) {
+    return [
+      Object.assign({
+        op: op,
+        repo: "principles",
+        file: "data/teaching/amazon/invent-and-simplify.json",
+        path: ["deepen"],
+        index: 0,
+        seq: 1,
+        company: "amazon",
+      }, extra),
+      Object.assign({
+        op: op,
+        repo: "principles",
+        file: "data/teaching/generic/invent-and-simplify.json",
+        path: ["deepen"],
+        index: 0,
+        seq: 2,
+        company: "generic",
+      }, extra),
+    ];
+  }
+  const files = {
+    "principles:data/teaching/amazon/invent-and-simplify.json": amazon,
+    "principles:data/teaching/generic/invent-and-simplify.json": different,
+  };
+  const inserted = reuse.expand(pair("insert", { value: "New?" }), index, maps, files);
+  assert.equal(inserted.ok, false);
+  assert.match(inserted.error, /already differs/);
+  const removed = reuse.expand(pair("remove", { before: "A" }), index, maps, files);
+  assert.equal(removed.ok, false);
+  assert.match(removed.error, /already differs/);
+  const moved = reuse.expand(pair("move", { to: 2, before: "A" }), index, maps, files);
+  assert.equal(moved.ok, false);
+  assert.match(moved.error, /already differs/);
+  const same = {
+    "principles:data/teaching/amazon/invent-and-simplify.json": amazon,
+    "principles:data/teaching/generic/invent-and-simplify.json": matched,
+  };
+  const copied = reuse.expand(pair("insert", { index: 1, value: "New?" }), index, maps, same);
+  assert.equal(copied.ok, true, copied.error);
+  assert.equal(copied.changes.length, 2);
+});
+
 test("a reused list that already differs is refused", () => {
   const result = reuse.expand([Object.assign({}, edit, {
     op: "remove",
