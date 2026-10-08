@@ -24,7 +24,9 @@ SCHEMA.md is the contract. The data is data/index.json, data/facets.json, and da
 
 Facet is the editor. It lists facets, BIQ questions, concrete questions, teaching, and further reading, and a save opens a pull request. Concrete questions are the `deepen` list in a teaching file. It does not own the principle sets or the question bank.
 
-The save function stays on the host, because that is where the token lives. `lib/` is the allowlist, the patch, and the abuse caps. The host runs that code on the server. The browser is not the authority. Do not edit the host's copy of those files. Edit them here.
+The save function stays on the host, because that is where the token lives. `lib/` is the allowlist, the patch, the abuse caps, and the reuse helper. The host runs that code on the server. The browser is not the authority. Do not edit the host's copy of those files. Edit them here.
+
+`lib/reuse.js` repeats a teaching edit on every reused copy that still has the same text. The derivation maps in the principles data name those copies. A slug rename is rewritten into each copy, including through a chain of maps, so a renamed principle slug is not treated as a content change. Another field in that file can still differ. Editing the field that already differs is refused, because saving one side would fail the principles validator. That difference stays on the map.
 
 `card.json` is status beta and unlisted. Do not drop unlisted to put the app on the catalog grid unless Tig says so.
 
