@@ -481,3 +481,37 @@ test("a facet change needs every map named in the repository list", () => {
   }]);
   assert.match(errors.join("\n"), /generic-arm.json is not in this save/);
 });
+
+test("a question still named by a facet cannot be removed", () => {
+  const before = JSON.stringify({
+    companies: [{ id: "amazon", name: "Amazon", examples: true, principles: [{ id: 1001, name: "Customer Obsession", questions: [{ id: "abcd1234", text: "Tell me?" }, { id: "bbbb2222", text: "Another?" }] }] }],
+    facetQuestions: { "customer-obsession": { ids: ["abcd1234"], authored: [] } },
+  });
+  const after = JSON.stringify({
+    companies: [{ id: "amazon", name: "Amazon", examples: true, principles: [{ id: 1001, name: "Customer Obsession", questions: [{ id: "bbbb2222", text: "Another?" }] }] }],
+    facetQuestions: { "customer-obsession": { ids: ["abcd1234"], authored: [] } },
+  });
+  const errors = guard.review(
+    { "biq:data/questions.json": before },
+    { "biq:data/questions.json": after },
+    [{ repo: "biq", file: "data/questions.json", op: "remove", path: ["companies", { id: "amazon" }, "principles", { id: 1001 }, "questions"], index: 0 }]
+  );
+  assert.match(errors.join("\n"), /abcd1234 is still linked from customer-obsession/);
+});
+
+test("facet questions keep a principle covered when its stored list is empty", () => {
+  const before = JSON.stringify({
+    companies: [{ id: "generic", name: "Universal Leadership Principles", examples: false, principles: [{ id: 8001, name: "Customer Obsession", facets: ["customer-obsession"], questions: [] }] }],
+    facetQuestions: { "customer-obsession": { ids: ["abcd1234"], authored: [{ text: "Tell me?" }] } },
+  });
+  const after = JSON.stringify({
+    companies: [{ id: "generic", name: "Universal Leadership Principles", examples: false, principles: [{ id: 8001, name: "Customer Obsession", facets: [], questions: [] }] }],
+    facetQuestions: { "customer-obsession": { ids: ["abcd1234"], authored: [{ text: "Tell me?" }] } },
+  });
+  const errors = guard.review(
+    { "biq:data/questions.json": before },
+    { "biq:data/questions.json": after },
+    [{ repo: "biq", file: "data/questions.json", op: "remove", path: ["companies", { id: "generic" }, "principles", { id: 8001 }, "facets"], index: 0 }]
+  );
+  assert.match(errors.join("\n"), /Customer Obsession would have no BIQ question/);
+});

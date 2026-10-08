@@ -560,6 +560,31 @@
     return "concrete:" + match[1] + ":" + match[2] + ":" + match[3];
   }
 
+  function listProjection(saved) {
+    var stored = S.files[saved.repo + ":" + saved.file];
+    var listed = stored ? dig(stored.json, saved.path) : null;
+    return Array.isArray(listed) ? listed.slice() : null;
+  }
+
+  function applyRestoredList(list, saved) {
+    var next = list.slice();
+    if (saved.op === "remove") {
+      if (typeof saved.index === "number" && saved.index >= 0 && saved.index < next.length) next.splice(saved.index, 1);
+      return next;
+    }
+    if (saved.op === "insert") {
+      if (typeof saved.index === "number" && saved.index >= 0 && saved.index <= next.length) next.splice(saved.index, 0, saved.value);
+      return next;
+    }
+    if (typeof saved.index !== "number" || saved.index < 0 || saved.index >= next.length) return next;
+    var moved = next.splice(saved.index, 1)[0];
+    var to = typeof saved.to === "number" ? saved.to : 0;
+    if (to < 0) to = 0;
+    if (to > next.length) to = next.length;
+    next.splice(to, 0, moved);
+    return next;
+  }
+
   function restorePending() {
     var raw = storageGet(PENDING_KEY);
     if (!raw) return;
@@ -574,18 +599,35 @@
     var n = 0;
     var staleN = 0;
     var migrated = false;
-    for (var i = 0; i < ids.length && n < MAX_CHANGES; i++) {
+    var structural = [];
+    var plainIds = [];
+    for (var i = 0; i < ids.length; i++) {
       var saved = data.edits[ids[i]];
       if (!saved || typeof saved !== "object") continue;
       if (typeof saved.repo !== "string" || typeof saved.file !== "string" || !Array.isArray(saved.path)) continue;
-      if (saved.op) {
-        var restoredOp = restoreOp(saved);
-        if (restoredOp) {
-          n++;
-          if (restoredOp.stale) staleN++;
-        }
-        continue;
+      if (saved.op) structural.push(saved);
+      else plainIds.push(ids[i]);
+    }
+    structural.sort(function (a, b) {
+      return (typeof a.seq === "number" ? a.seq : 0) - (typeof b.seq === "number" ? b.seq : 0);
+    });
+    var projectedLists = Object.create(null);
+    for (var s = 0; s < structural.length && n < MAX_CHANGES; s++) {
+      var opSaved = structural[s];
+      var listId = listKey(opSaved.repo, opSaved.file, opSaved.path);
+      if (!Object.prototype.hasOwnProperty.call(projectedLists, listId)) projectedLists[listId] = listProjection(opSaved);
+      var restoredOp = restoreOp(opSaved, projectedLists[listId]);
+      if (!restoredOp) continue;
+      n++;
+      if (restoredOp.stale) staleN++;
+      else if (Array.isArray(projectedLists[listId]) && (opSaved.op === "insert" || opSaved.op === "remove" || opSaved.op === "move")) {
+        projectedLists[listId] = applyRestoredList(projectedLists[listId], opSaved);
       }
+    }
+    for (var p = 0; p < plainIds.length && n < MAX_CHANGES; p++) {
+      var plainId = plainIds[p];
+      var saved = data.edits[plainId];
+      if (!saved || typeof saved !== "object") continue;
       if (saved.path.length < 1 || saved.path.length > 8) continue;
       if (typeof saved.before !== "string" || typeof saved.after !== "string") continue;
       if (saved.before.length > 16000 || saved.after.length > 16000) continue;
@@ -602,7 +644,7 @@
       // Stale means this field's own text moved. The same words in a newer
       // file still apply, and the current text is what the editor shows.
       var stale = current == null || current !== saved.before;
-      var id = item && field ? changeId(item, field) : String(saved.id || ids[i]);
+      var id = item && field ? changeId(item, field) : String(saved.id || plainId);
       if (!id || S.pending[id]) continue;
       if (stale) staleN++;
       if (moved) migrated = true;
@@ -2115,7 +2157,11 @@
       else if (name === "up" && current) moveListed(current, -1);
       else if (name === "down" && current) moveListed(current, 1);
       else if (name === "delete-facet" && current) deleteFacetById(facetIdOf(current));
+      else if (name === "facet-up" && current) moveFacet(current, -1);
+      else if (name === "facet-down" && current) moveFacet(current, 1);
       else if (name === "delete-teaching" && current) deleteTeachingFile(current);
+      else if (name === "teaching-up" && current) moveTeaching(current, -1);
+      else if (name === "teaching-down" && current) moveTeaching(current, 1);
       paint();
       return;
     }
@@ -3035,7 +3081,10 @@
     var doc = cloneJson(bank.json);
     var arr = dig(doc, item.listPath);
     if (!Array.isArray(arr) || index < 0 || index >= arr.length) return "";
+    var removed = arr[index];
     arr.splice(index, 1);
+    var linked = removed && removed.id ? linkedFacet(doc, removed.id) : "";
+    if (linked) return "Question id " + removed.id + " is still linked from " + linked + ", so it cannot be removed.";
     return visibleDrop(bank.json, doc);
   }
 
@@ -3054,11 +3103,35 @@
     return donors;
   }
 
-  function visibleOf(pr, donors) {
+  function mappedQuestionCount(doc, facetId) {
+    var map = doc && doc.facetQuestions;
+    var entry = map && map[facetId];
+    if (!entry) return 0;
+    var ids = Array.isArray(entry) ? entry : (entry.ids || []);
+    var authored = Array.isArray(entry.authored) ? entry.authored : [];
+    return ids.length + authored.length;
+  }
+
+  function linkedFacet(doc, id) {
+    var map = (doc && doc.facetQuestions) || {};
+    var keys = Object.keys(map);
+    for (var i = 0; i < keys.length; i++) {
+      var entry = map[keys[i]];
+      var ids = Array.isArray(entry) ? entry : ((entry && entry.ids) || []);
+      if (ids.indexOf(id) !== -1) return keys[i];
+    }
+    return "";
+  }
+
+  function visibleOf(pr, donors, doc) {
     var own = pr && Array.isArray(pr.questions) ? pr.questions.length : 0;
     if (own) return own;
     var facets = (pr && pr.facets) || [];
-    for (var i = 0; i < facets.length; i++) if (donors[facets[i]]) return donors[facets[i]];
+    for (var i = 0; i < facets.length; i++) {
+      if (donors[facets[i]]) return donors[facets[i]];
+      var mapped = mappedQuestionCount(doc, facets[i]);
+      if (mapped) return mapped;
+    }
     return 0;
   }
 
@@ -3069,7 +3142,7 @@
     (before.companies || []).forEach(function (co) {
       (co.principles || []).forEach(function (pr) {
         if (name) return;
-        var was = visibleOf(pr, beforeDonors);
+        var was = visibleOf(pr, beforeDonors, before);
         var nextPr = null;
         (after.companies || []).forEach(function (aco) {
           if (aco.id !== co.id) return;
@@ -3077,7 +3150,7 @@
             if (apr.id === pr.id) nextPr = apr;
           });
         });
-        var now = visibleOf(nextPr, afterDonors);
+        var now = visibleOf(nextPr, afterDonors, after);
         if (was > 0 && now === 0) name = (pr.name || co.name) + " would have no BIQ question.";
       });
     });
@@ -3126,13 +3199,13 @@
     var lost = [];
     (before.companies || []).forEach(function (co) {
       (co.principles || []).forEach(function (pr) {
-        var was = visibleOf(pr, beforeDonors);
+        var was = visibleOf(pr, beforeDonors, before);
         var nextPr = null;
         (after.companies || []).forEach(function (aco) {
           if (aco.id !== co.id) return;
           (aco.principles || []).forEach(function (apr) { if (apr.id === pr.id) nextPr = apr; });
         });
-        if (was > 0 && visibleOf(nextPr, afterDonors) === 0) lost.push((pr.name || "") + " (" + co.name + ")");
+        if (was > 0 && visibleOf(nextPr, afterDonors, after) === 0) lost.push((pr.name || "") + " (" + co.name + ")");
       });
     });
     if (!lost.length) return "";
@@ -3184,6 +3257,71 @@
       company: companyId || "",
       principleName: principleName || "",
     });
+  }
+
+  function moveFacet(item, dir) {
+    var facetId = facetIdOf(item);
+    if (!facetId) return;
+    if (!S.maps.length) {
+      S.notice = S.mapsNote || "Derivation maps are not loaded, so a facet change cannot be checked.";
+      return;
+    }
+    var doc = S.files["principles:data/facets.json"];
+    if (!doc) return;
+    var facets = replayValues("principles", "data/facets.json", ["facets"], doc.json.facets || []);
+    var index = -1;
+    for (var i = 0; i < facets.length; i++) if (facets[i] && facets[i].id === facetId) index = i;
+    var to = index + dir;
+    if (index < 0 || to < 0 || to >= facets.length) return;
+    queueOp({
+      op: "move",
+      repo: "principles",
+      file: "data/facets.json",
+      path: ["facets"],
+      index: index,
+      to: to,
+      before: facets[index],
+      label: facets[index].label || facetId,
+      field: "moved",
+      listKind: "facet",
+      type: "facets",
+      shared: true,
+      principleName: facets[index].label || facetId,
+    });
+    afterStruct();
+  }
+
+  function moveTeaching(item, dir) {
+    var match = /^data\/teaching\/([a-z0-9-]+)\/([a-z0-9-]+)\.json$/.exec(item && item.file || "");
+    if (!match || match[2] === "index") return;
+    var companyId = match[1];
+    var slug = match[2];
+    var indexFile = "data/teaching/" + companyId + "/index.json";
+    var stored = S.files["principles:" + indexFile];
+    if (!stored) return;
+    var list = replayValues("principles", indexFile, ["principles"], stored.json.principles || []);
+    var index = -1;
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].slug === slug) index = i;
+    var to = index + dir;
+    if (index < 0 || to < 0 || to >= list.length) return;
+    var co = S.companies.filter(function (entry) { return entry.id === companyId; })[0];
+    var meta = co ? (co.principles || []).filter(function (pr) { return pr.slug === slug; })[0] : null;
+    queueOp({
+      op: "move",
+      repo: "principles",
+      file: indexFile,
+      path: ["principles"],
+      index: index,
+      to: to,
+      before: list[index],
+      label: (meta && meta.name) || slug,
+      field: "moved",
+      listKind: "catalog",
+      company: companyId,
+      companyName: co ? co.name : companyId,
+      principleName: meta ? meta.name : slug,
+    });
+    afterStruct();
   }
 
   function deleteFacetById(facetId) {
@@ -4017,9 +4155,13 @@
       actions.appendChild(el("button", { type: "button", "data-act": "delete" }, "Delete"));
     }
     if (item.kind === "facet" && item.file === "data/facets.json") {
+      actions.appendChild(el("button", { type: "button", "data-act": "facet-up" }, "Move facet up"));
+      actions.appendChild(el("button", { type: "button", "data-act": "facet-down" }, "Move facet down"));
       actions.appendChild(el("button", { type: "button", "data-act": "delete-facet" }, "Delete facet"));
     }
     if ((item.kind === "teaching" || item.kind === "concrete" || item.kind === "reading") && item.file.indexOf("/index.json") === -1 && item.file.indexOf("data/teaching/") === 0) {
+      actions.appendChild(el("button", { type: "button", "data-act": "teaching-up" }, "Move teaching up"));
+      actions.appendChild(el("button", { type: "button", "data-act": "teaching-down" }, "Move teaching down"));
       actions.appendChild(el("button", { type: "button", "data-act": "delete-teaching" }, "Delete teaching"));
     }
     return actions.childNodes.length ? actions : null;
@@ -4076,7 +4218,7 @@
     return [];
   }
 
-  function restoreOp(saved) {
+  function restoreOp(saved, projected) {
     var op = saved.op;
     if (op !== "insert" && op !== "remove" && op !== "move" && op !== "create" && op !== "delete") return false;
     if (!Array.isArray(saved.path) || saved.path.length > 8) return false;
@@ -4095,13 +4237,12 @@
       stale = !stored || !!(saved.sha && stored.sha && saved.sha !== stored.sha);
     } else if (op === "insert" || op === "remove" || op === "move") {
       var currentSha = stored && stored.sha ? stored.sha : "";
+      var listed = projected || (stored ? dig(stored.json, saved.path) : null);
       if (saved.sha && currentSha && saved.sha !== currentSha) stale = true;
-      else if (op !== "insert") {
-        var listed = stored ? dig(stored.json, saved.path) : null;
+      else if (op === "insert") {
+        if (projected || !saved.sha || !stored) stale = !Array.isArray(listed) || saved.index > listed.length;
+      } else {
         stale = !Array.isArray(listed) || !sameJson(listed[saved.index], saved.before);
-      } else if (!saved.sha || !stored) {
-        var inserted = stored ? dig(stored.json, saved.path) : null;
-        stale = !Array.isArray(inserted) || saved.index > inserted.length;
       }
     }
     S.pending[id] = {

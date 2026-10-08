@@ -737,6 +737,125 @@ test("two removes on one reused list use the list after the first removal", () =
   assert.equal(copies[1].index, 0);
 });
 
+test("a reused catalog insert keeps the source position", () => {
+  const result = reuse.expand([{
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 1,
+    seq: 4,
+    value: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+    company: "generic",
+  }], index, maps, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({
+      principles: [
+        { id: 8001, slug: "customer-obsession", file: "customer-obsession.json" },
+        { id: 8002, slug: "ownership", file: "ownership.json" },
+      ],
+    }),
+    "principles:data/teaching/amazon/index.json": JSON.stringify({
+      principles: [
+        { id: 1001, slug: "customer-obsession", file: "customer-obsession.json" },
+        { id: 1002, slug: "ownership", file: "ownership.json" },
+      ],
+    }),
+  });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.changes[1].index, 1);
+  assert.deepEqual(result.changes[1].value, { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" });
+});
+
+test("a mapped teaching record takes the destination principle id", () => {
+  const record = { id: 1003, slug: "invent-and-simplify", why: ["Same prose."] };
+  const present = reuse.expand([{
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/amazon/invent-and-simplify.json",
+    path: [],
+    value: record,
+    company: "amazon",
+  }], index, maps, {
+    "principles:data/teaching/generic/invent-and-simplify.json": JSON.stringify({
+      id: 8006,
+      slug: "invent-and-simplify",
+      why: ["Same prose."],
+    }),
+  });
+  assert.equal(present.ok, true, present.error);
+  assert.equal(present.changes.length, 1);
+  const missing = reuse.expand([{
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/amazon/invent-and-simplify.json",
+    path: [],
+    value: record,
+    company: "amazon",
+  }], index, maps, {});
+  assert.equal(missing.ok, true, missing.error);
+  assert.equal(missing.changes.length, 2);
+  assert.equal(missing.changes[1].file, "data/teaching/generic/invent-and-simplify.json");
+  assert.equal(missing.changes[1].value.id, 8006);
+  assert.equal(missing.changes[1].value.slug, "invent-and-simplify");
+  const differed = reuse.expand([{
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/amazon/invent-and-simplify.json",
+    path: [],
+    value: record,
+    company: "amazon",
+  }], index, maps, {
+    "principles:data/teaching/generic/invent-and-simplify.json": JSON.stringify({
+      id: 8006,
+      slug: "invent-and-simplify",
+      why: ["Different prose."],
+    }),
+  });
+  assert.equal(differed.ok, false);
+  assert.match(differed.error, /already differs/);
+});
+
+test("a new catalog does not have to match the other company's catalog", () => {
+  const created = {
+    title: "Amazon: a user's manual",
+    principles: [{ id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" }],
+    blog: [{ title: "Kindel", url: "https://kindel.com/", note: "The public site." }],
+  };
+  const matched = reuse.expand([{
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: [],
+    value: created,
+    company: "amazon",
+  }], index, maps, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({
+      title: "Universal: a user's manual",
+      principles: [{ id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" }],
+      blog: [{ title: "Other", url: "https://kindel.com/other", note: "Other." }],
+    }),
+  });
+  assert.equal(matched.ok, true, matched.error);
+  assert.equal(matched.changes.length, 1);
+  const added = reuse.expand([{
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: [],
+    value: created,
+    company: "amazon",
+  }], index, maps, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({
+      title: "Universal: a user's manual",
+      principles: [],
+      blog: [],
+    }),
+  });
+  assert.equal(added.ok, true, added.error);
+  assert.equal(added.changes[1].op, "insert");
+  assert.deepEqual(added.changes[1].value, { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" });
+});
+
 test("two agreeing edits of the same reused field stay as the caller sent them", () => {
   const generic = Object.assign({}, edit, {
     file: "data/teaching/generic/invent-and-simplify.json",
