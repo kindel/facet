@@ -18,7 +18,7 @@ jobs:
           node-version: "20"
 
       - name: Check the page script and the patch library
-        run: node --check js/facet.js && node --check lib/allow.js && node --check lib/patch.js && node --check lib/plan.js && node --check lib/rules.js && node --check lib/guard.js && node --check lib/reuse.js
+        run: node --check js/facet.js && node --check js/essay-links.js && node --check js/essay-catalog.js && node --check lib/allow.js && node --check lib/patch.js && node --check lib/plan.js && node --check lib/rules.js && node --check lib/guard.js && node --check lib/reuse.js
 
-      - name: Run the patch and allowlist tests
-        run: node --test tests/patch.test.mjs tests/allow.test.mjs tests/guard.test.mjs tests/reuse.test.mjs
+      - name: Run the patch, allowlist, and essay link tests
+        run: node --test tests/patch.test.mjs tests/allow.test.mjs tests/guard.test.mjs tests/reuse.test.mjs tests/essay-links.test.mjs && node scripts/check-essay-links.js
