@@ -215,7 +215,7 @@ test("an essay permalink has to use the kindel essays path", () => {
   assert.match(inserted.join("\n"), /kindel.com\/essays\/how-to-write-a-working-backwards-doc/);
   const byId = rules.checkItem({
     title: "The 5 Ps",
-    url: "https://blog.kindel.com/?p=419",
+    url: "https://blog.kindel.com/" + "?p=419",
     note: "A note.",
   }, { item: "blog" });
   assert.match(byId.join("\n"), /essays\/the-5-ps-achieving-focus-in-any-endeavor/);
