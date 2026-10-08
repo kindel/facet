@@ -357,6 +357,58 @@ test("removing a teaching record also has to clear its catalog entry", () => {
   assert.equal(dropped.length, 0);
 });
 
+test("a dry run keeps the removed lines of a deleted teaching file", () => {
+  const record = "data/teaching/generic/invent-and-simplify.json";
+  const catalog = "data/teaching/generic/index.json";
+  const removed = { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" };
+  const kept = { id: 8001, slug: "ownership", file: "ownership.json" };
+  const recordText = "{\"id\":8006}\n";
+  const catalogText = JSON.stringify({
+    principles: [removed, kept],
+    blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+  }, null, 2) + "\n";
+  const indexText = JSON.stringify({
+    companies: [{
+      id: "generic",
+      principles: [
+        { id: 8006, slug: "invent-and-simplify" },
+        { id: 8001, slug: "ownership" },
+      ],
+    }],
+  });
+  const prepared = plan.prepare(
+    {
+      "principles:data/index.json": indexText,
+      ["principles:" + catalog]: catalogText,
+      ["principles:" + record]: recordText,
+    },
+    [
+      {
+        op: "remove",
+        repo: "principles",
+        file: catalog,
+        path: ["principles"],
+        index: 0,
+        before: removed,
+      },
+      {
+        op: "delete",
+        repo: "principles",
+        file: record,
+        path: [],
+      },
+    ],
+    { generic: ["invent-and-simplify", "ownership"] }
+  );
+  assert.equal(prepared.ok, true, JSON.stringify(prepared.errors));
+  const pulls = plan.buildPlan(prepared, { now: Date.UTC(2026, 9, 8, 12, 0, 0), suffix: "drop" });
+  const deleted = pulls[0].files.filter((file) => file.path === record)[0];
+  assert.equal(deleted.deleted, true);
+  assert.equal(deleted.content, null);
+  assert.match(deleted.patch, /^-{"id":8006}$/m);
+  assert.match(deleted.patch, /^--- a\/data\/teaching\/generic\/invent-and-simplify\.json$/m);
+});
+
 test("a shared BIQ list cannot grow on the company that only displays it", () => {
   const before = JSON.stringify({
     companies: [
