@@ -7,6 +7,16 @@ const patch = require("../lib/patch.js");
 const plan = require("../lib/plan.js");
 const rules = require("../lib/rules.js");
 
+function amazonIndex(slugs) {
+  const ids = { ownership: 1002, "bias-for-action": 1003, "deliver-results": 1004, constructor: 1005 };
+  return JSON.stringify({
+    companies: [{
+      id: "amazon",
+      principles: slugs.map((slug) => ({ id: ids[slug], slug: slug })),
+    }],
+  });
+}
+
 const original = `{
   "id": 1002,
   "slug": "ownership",
@@ -176,8 +186,12 @@ test("a principle link in a related note must be listed in related", () => {
   ]
 }
 `;
+  const files = {
+    "principles:data/index.json": amazonIndex(slugs),
+    "principles:data/teaching/amazon/ownership.json": teaching,
+  };
   const missing = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",
@@ -190,7 +204,7 @@ test("a principle link in a related note must be listed in related", () => {
   assert.equal(missing.ok, false);
   assert.match(missing.errors[0].error, /\{lp:deliver-results\} is missing from related/);
   const listed = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",
@@ -211,8 +225,12 @@ test("a further reading note rejects an unknown or broken principle link", () =>
   ]
 }
 `;
+  const files = {
+    "principles:data/index.json": amazonIndex(slugs),
+    "principles:data/teaching/amazon/ownership.json": teaching,
+  };
   const unknown = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",
@@ -220,12 +238,12 @@ test("a further reading note rejects an unknown or broken principle link", () =>
       before: "Why it belongs.",
       after: "See {lp:not-a-principle}.",
     }],
-    { amazon: slugs }
+    { amazon: slugs.concat(["not-a-principle"]) }
   );
   assert.equal(unknown.ok, false);
   assert.match(unknown.errors[0].error, /Unknown principle link \{lp:not-a-principle\}/);
   const broken = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",
@@ -302,13 +320,20 @@ test("a teaching save without the company's principle list is rejected", () => {
   assert.match(wrongType.errors[0].error, /principle list/);
   const checked = plan.prepare(files, [change], { amazon: ["ownership", "deliver-results"] });
   assert.equal(checked.ok, false);
-  assert.match(checked.errors[0].error, /\{lp:deliver-results\} is missing from related/);
-  const hidden = plan.prepare(files, [{
+  assert.match(checked.errors[0].error, /principle list/);
+  const loaded = {
+    "principles:data/index.json": amazonIndex(["ownership", "deliver-results"]),
+    "principles:data/teaching/amazon/ownership.json": teaching,
+  };
+  const fromIndex = plan.prepare(loaded, [change], { amazon: ["ownership", "deliver-results", "not-a-principle"] });
+  assert.equal(fromIndex.ok, false);
+  assert.match(fromIndex.errors[0].error, /\{lp:deliver-results\} is missing from related/);
+  const hidden = plan.prepare(loaded, [{
     ...change,
     after: "See {lp:constructor}.",
   }], { amazon: ["ownership", "constructor"] });
   assert.equal(hidden.ok, false);
-  assert.match(hidden.errors[0].error, /\{lp:constructor\} is missing from related/);
+  assert.match(hidden.errors[0].error, /Unknown principle link \{lp:constructor\}/);
 });
 
 test("a teaching link must resolve and be listed in related", () => {
@@ -370,8 +395,12 @@ test("deepen questions must end with a question mark", () => {
   ]
 }
 `;
+  const files = {
+    "principles:data/index.json": amazonIndex(["ownership"]),
+    "principles:data/teaching/amazon/ownership.json": teaching,
+  };
   const bad = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",
@@ -384,7 +413,7 @@ test("deepen questions must end with a question mark", () => {
   assert.equal(bad.ok, false);
   assert.match(bad.errors[0].error, /\?/);
   const good = plan.prepare(
-    { "principles:data/teaching/amazon/ownership.json": teaching },
+    files,
     [{
       repo: "principles",
       file: "data/teaching/amazon/ownership.json",

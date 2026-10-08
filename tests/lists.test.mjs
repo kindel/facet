@@ -32,6 +32,19 @@ function teaching(count) {
 
 const slugs = { generic: ["ownership", "earn-trust", "deliver-results"] };
 
+function genericIndexText() {
+  return JSON.stringify({
+    companies: [{
+      id: "generic",
+      principles: [
+        { id: 8002, slug: "ownership" },
+        { id: 8003, slug: "earn-trust" },
+        { id: 8004, slug: "deliver-results" },
+      ],
+    }],
+  });
+}
+
 test("lists that can change are allowlisted, and the others stay closed", () => {
   assert.equal(allow.assess({
     op: "insert",
@@ -76,7 +89,10 @@ test("lists that can change are allowlisted, and the others stay closed", () => 
 test("an added reading link is labeled and keeps the other bytes", () => {
   const before = teaching(6);
   const prepared = plan.prepare(
-    { "principles:data/teaching/generic/ownership.json": before },
+    {
+      "principles:data/index.json": genericIndexText(),
+      "principles:data/teaching/generic/ownership.json": before,
+    },
     [{
       op: "insert",
       repo: "principles",
@@ -235,7 +251,10 @@ test("an existing essay permalink does not block a new reading link", () => {
     "https://blog.kindel.com/" + "2019/05/30/focusing-on-users-is-not-customer-obsession/"
   );
   const prepared = plan.prepare(
-    { "principles:data/teaching/generic/ownership.json": before },
+    {
+      "principles:data/index.json": genericIndexText(),
+      "principles:data/teaching/generic/ownership.json": before,
+    },
     [{
       op: "insert",
       repo: "principles",
@@ -387,6 +406,34 @@ test("a stub example pack is a new file next to the question", () => {
   const pack = prepared.files.filter((file) => file.file.indexOf("examples/") !== -1)[0];
   assert.equal(pack.created, true);
   assert.match(pack.after, /Who changed the plan\?/);
+  const wrongName = plan.prepare(
+    { "biq:data/questions.json": bank },
+    [
+      {
+        op: "insert",
+        repo: "biq",
+        file: "data/questions.json",
+        path: ["companies", { id: "amazon" }, "principles", { id: 1001 }, "questions"],
+        index: 1,
+        value: { text: "Who changed the plan?", manager: false, id: "abc12345" },
+        label: "Who changed the plan?",
+        field: "added",
+        company: "amazon",
+      },
+      {
+        op: "create",
+        repo: "biq",
+        file: "data/examples/abc12345.json",
+        path: [],
+        value: { principle_id: 1001, principle: "Ownership", question: "Who changed the plan?" },
+        label: "Example pack",
+        field: "added",
+      },
+    ],
+    {}
+  );
+  assert.equal(wrongName.ok, false);
+  assert.match(wrongName.errors[0].error, /names a different principle/);
   assert.equal(allow.assess({
     op: "create",
     repo: "biq",
@@ -397,21 +444,32 @@ test("a stub example pack is a new file next to the question", () => {
 });
 
 test("a related note has to name a principle this company has", () => {
+  const change = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/ownership.json",
+    path: ["related"],
+    index: 2,
+    value: { id: "not-a-real-principle", note: "A note." },
+    company: "generic",
+  };
   const prepared = plan.prepare(
-    { "principles:data/teaching/generic/ownership.json": teaching(8) },
-    [{
-      op: "insert",
-      repo: "principles",
-      file: "data/teaching/generic/ownership.json",
-      path: ["related"],
-      index: 2,
-      value: { id: "not-a-real-principle", note: "A note." },
-      company: "generic",
-    }],
-    slugs
+    {
+      "principles:data/index.json": genericIndexText(),
+      "principles:data/teaching/generic/ownership.json": teaching(8),
+    },
+    [change],
+    { generic: slugs.generic.concat(["not-a-real-principle"]) }
   );
   assert.equal(prepared.ok, false);
   assert.match(prepared.errors[0].error, /Unknown principle/);
+  const unloaded = plan.prepare(
+    { "principles:data/teaching/generic/ownership.json": teaching(8) },
+    [change],
+    { generic: slugs.generic.concat(["not-a-real-principle"]) }
+  );
+  assert.equal(unloaded.ok, false);
+  assert.match(unloaded.errors[0].error, /principle list/);
 });
 
 test("a facet id is the slug of its label and principles are numbers", () => {
@@ -688,6 +746,36 @@ test("a save cannot produce two facets with the same id", () => {
   });
   const emptyRows = { "1001": Object.create(null), "1002": Object.create(null) };
   assert.equal(rules.structuralShape(distinct, "data/facets.json", false, { rowsByPrinciple: emptyRows }).length, 0);
+});
+
+test("a facet save rejects duplicate row ids and a generated id that shadows a source ref", () => {
+  const source = { principle: 1002, id: "knowing-what-you-own" };
+  const otherSource = { principle: 1001, id: "knowing-what-you-own" };
+  const rowMap = {
+    "1002": { "knowing-what-you-own": true },
+    "1001": { "knowing-what-you-own": true },
+  };
+  function shape(rows, principles) {
+    const doc = facetDoc(rows);
+    if (principles) doc.facets[0].principles = principles;
+    return rules.structuralShape(doc, "data/facets.json", false, { rowsByPrinciple: rowMap }).join("\n");
+  }
+  assert.match(shape([source, generatedRow, Object.assign({}, generatedRow)]), /Row id the-work is already used/);
+  assert.match(shape([source, source, generatedRow]), /Source ref 1002\/knowing-what-you-own is already used/);
+  assert.match(shape([source, Object.assign({}, generatedRow, { id: "knowing-what-you-own" })]), /Generated row id knowing-what-you-own reuses a source ref id/);
+  assert.match(shape([Object.assign({}, generatedRow, { id: "knowing-what-you-own" }), source]), /Source ref 1002\/knowing-what-you-own reuses a generated row id/);
+  assert.equal(shape([source, otherSource, generatedRow], [1002, 1001]), "");
+  const before = facetDoc([source, generatedRow]);
+  const duplicate = plan.prepare(sourceFiles(before), [{
+    op: "insert",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets", { id: "ownership" }, "rows"],
+    index: 2,
+    value: Object.assign({}, generatedRow),
+  }]);
+  assert.equal(duplicate.ok, false);
+  assert.match(duplicate.errors[0].error, /Row id the-work is already used/);
 });
 
 test("removing the last source ref is refused when a listed principle has record rows", () => {
