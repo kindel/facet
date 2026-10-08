@@ -1476,3 +1476,224 @@ test("calibration words stay inside quoted, authored, and generated", () => {
   assert.equal(saved.ok, true, JSON.stringify(saved.errors));
   assert.match(saved.files[0].after, /"words": "authored"/);
 });
+
+test("a source ref cannot carry inline prose", () => {
+  const spec = {
+    item: "facetRow",
+    facetPrinciples: [1002],
+    rowsByPrinciple: { "1002": { "knowing-what-you-own": true } },
+  };
+  const partial = rules.checkItem({ principle: 1002, id: "knowing-what-you-own", under: "Does less." }, spec);
+  assert.match(partial.join("\n"), /must not name a principle/);
+  assert.match(partial.join("\n"), /situation/);
+  const bare = rules.checkItem({ principle: 1002, id: "knowing-what-you-own" }, spec);
+  assert.deepEqual(bare, []);
+  const inserted = plan.prepare(sourceFiles(facetDoc([generatedRow])), [{
+    op: "insert",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets", { id: "ownership" }, "rows"],
+    index: 0,
+    value: { principle: 1002, id: "knowing-what-you-own", under: "Does less." },
+  }]);
+  assert.equal(inserted.ok, false);
+  assert.match(inserted.errors[0].error, /must not name a principle|situation/);
+});
+
+test("a facet label rejects an em dash, an en dash, and ---", () => {
+  function labeled(label) {
+    return rules.checkItem({
+      id: "ownership-deep",
+      label: label,
+      principles: [1002],
+      rows: [generatedRow],
+    }, { item: "facet" }).join("\n");
+  }
+  assert.match(labeled("Ownership\u2014deep"), /em dash/);
+  assert.match(labeled("Ownership\u2013deep"), /en dash/);
+  assert.match(labeled("Ownership---deep"), /---/);
+  const plain = labeled("Ownership deep");
+  assert.equal(plain.indexOf("dash"), -1);
+  assert.equal(plain.indexOf("---"), -1);
+});
+
+test("a teaching catalog rejects prohibited dashes and keeps an en dash in a reading title", () => {
+  const entry = { id: 1002, slug: "ownership", file: "ownership.json" };
+  const blog = [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }];
+  function shape(doc) {
+    return rules.structuralShape(doc, "data/teaching/amazon/index.json", false, { records: { ownership: 1002 } }).join("\n");
+  }
+  assert.match(shape({
+    principles: [entry],
+    blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why\u2014it belongs." }],
+  }), /em dash/);
+  assert.match(shape({
+    principles: [entry],
+    blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why---it belongs." }],
+  }), /---/);
+  assert.match(shape({
+    principles: [entry],
+    blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why\u2013it belongs." }],
+  }), /en dash/);
+  assert.equal(shape({
+    principles: [entry],
+    blog: [{ title: "2019\u20132020", url: "https://kindel.com/a", note: "Why it belongs." }],
+  }), "");
+  assert.equal(shape({ principles: [entry], blog: blog }), "");
+});
+
+test("a facet added only on the target principle is refused", () => {
+  const facets = {
+    version: 1,
+    facets: [{
+      id: "ownership",
+      label: "ownership",
+      principles: [8002, 1002],
+      rows: [generatedRow],
+    }],
+  };
+  const index = {
+    companies: [
+      { id: "generic", principles: [{ id: 8002, slug: "ownership", facets: ["ownership"] }] },
+      { id: "amazon", principles: [{ id: 1002, slug: "ownership", facets: ["ownership"] }] },
+    ],
+  };
+  const questions = {
+    companies: [
+      { id: "generic", principles: [{ id: 8002, facets: ["ownership"], questions: [{ text: "Tell me?" }] }] },
+      { id: "amazon", principles: [{ id: 1002, facets: ["ownership"], questions: [{ text: "Tell me?" }] }] },
+    ],
+  };
+  const map = {
+    source: "generic",
+    target: "amazon",
+    pairs: [{ sourceId: 8002, facets: ["ownership"], targetIds: [1002] }],
+  };
+  const before = {
+    "principles:data/facets.json": JSON.stringify(facets),
+    "principles:data/index.json": JSON.stringify(index),
+    "biq:data/questions.json": JSON.stringify(questions),
+    "principles:data/maps/generic-amazon.json": JSON.stringify(map),
+    "principles:data/maps/_list.json": JSON.stringify(["data/maps/generic-amazon.json"]),
+  };
+  const afterFacets = JSON.parse(JSON.stringify(facets));
+  afterFacets.facets.push({
+    id: "extra",
+    label: "extra",
+    principles: [1002],
+    rows: [generatedRow],
+  });
+  const afterIndex = JSON.parse(JSON.stringify(index));
+  afterIndex.companies[1].principles[0].facets = ["extra", "ownership"];
+  const afterQuestions = JSON.parse(JSON.stringify(questions));
+  afterQuestions.companies[1].principles[0].facets = ["extra", "ownership"];
+  const errors = guard.review(before, Object.assign({}, before, {
+    "principles:data/facets.json": JSON.stringify(afterFacets),
+    "principles:data/index.json": JSON.stringify(afterIndex),
+    "biq:data/questions.json": JSON.stringify(afterQuestions),
+  }), [{
+    op: "insert",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets"],
+    index: 1,
+  }]);
+  assert.match(errors.join("\n"), /does not match the target facets of principle 8002/);
+  const matched = JSON.parse(JSON.stringify(map));
+  matched.pairs[0].facets = ["extra", "ownership"];
+  const sourceAlso = JSON.parse(JSON.stringify(afterFacets));
+  sourceAlso.facets[1].principles = [8002, 1002];
+  const alignedIndex = JSON.parse(JSON.stringify(afterIndex));
+  alignedIndex.companies[0].principles[0].facets = ["extra", "ownership"];
+  const alignedQuestions = JSON.parse(JSON.stringify(afterQuestions));
+  alignedQuestions.companies[0].principles[0].facets = ["extra", "ownership"];
+  const same = guard.review(before, Object.assign({}, before, {
+    "principles:data/facets.json": JSON.stringify(sourceAlso),
+    "principles:data/index.json": JSON.stringify(alignedIndex),
+    "biq:data/questions.json": JSON.stringify(alignedQuestions),
+    "principles:data/maps/generic-amazon.json": JSON.stringify(matched),
+  }), [{
+    op: "insert",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets"],
+    index: 1,
+  }]);
+  assert.equal(same.join("\n").indexOf("target facets"), -1);
+});
+
+function packLevel() {
+  return {
+    raiseTranscript: [{ role: "candidate", text: "Yes." }],
+    lowerTranscript: [{ role: "candidate", text: "No." }],
+    raiseFeedback: "Raises.",
+    lowerFeedback: "Lowers.",
+  };
+}
+
+function completePack() {
+  return {
+    principle_id: 1001,
+    principle: "Customer Obsession",
+    question: "Another?",
+    levels: { junior: packLevel(), senior: packLevel(), exec: packLevel() },
+  };
+}
+
+test("removing a BIQ question requires a remaining complete pack", () => {
+  const beforeDoc = {
+    companies: [{
+      id: "amazon",
+      name: "Amazon",
+      examples: true,
+      principles: [{
+        id: 1001,
+        name: "Customer Obsession",
+        questions: [
+          { id: "abcd1234", text: "Tell me?" },
+          { id: "bbbb2222", text: "Another?" },
+        ],
+      }],
+    }],
+  };
+  const afterDoc = JSON.parse(JSON.stringify(beforeDoc));
+  afterDoc.companies[0].principles[0].questions = [{ id: "bbbb2222", text: "Another?" }];
+  const before = { "biq:data/questions.json": JSON.stringify(beforeDoc) };
+  const change = [{
+    repo: "biq",
+    file: "data/questions.json",
+    op: "remove",
+    path: ["companies", { id: "amazon" }, "principles", { id: 1001 }, "questions"],
+    index: 0,
+  }];
+  function reviewPack(pack) {
+    const after = { "biq:data/questions.json": JSON.stringify(afterDoc) };
+    if (pack) after["biq:data/examples/bbbb2222.json"] = JSON.stringify(pack);
+    return guard.review(before, after, change).join("\n");
+  }
+  assert.match(reviewPack(null), /Customer Obsession would have no question with Junior, Senior, and Exec examples/);
+  assert.match(reviewPack({ principle_id: 1001, question: "Another?" }), /Junior, Senior, and Exec/);
+  const partial = completePack();
+  delete partial.levels.exec;
+  assert.match(reviewPack(partial), /Junior, Senior, and Exec/);
+  const emptyTranscript = completePack();
+  emptyTranscript.levels.junior.raiseTranscript = [];
+  assert.match(reviewPack(emptyTranscript), /Junior, Senior, and Exec/);
+  const splitAfter = JSON.parse(JSON.stringify(beforeDoc));
+  splitAfter.companies[0].principles[0].questions = [
+    { id: "bbbb2222", text: "Another?" },
+    { id: "cccc3333", text: "Third?" },
+  ];
+  const juniorOnly = { levels: { junior: packLevel(), senior: packLevel() } };
+  const execOnly = { levels: { exec: packLevel() } };
+  const split = guard.review(before, {
+    "biq:data/questions.json": JSON.stringify(splitAfter),
+    "biq:data/examples/bbbb2222.json": JSON.stringify(juniorOnly),
+    "biq:data/examples/cccc3333.json": JSON.stringify(execOnly),
+  }, change);
+  assert.match(split.join("\n"), /Junior, Senior, and Exec/);
+  assert.deepEqual(guard.review(before, {
+    "biq:data/questions.json": JSON.stringify(afterDoc),
+    "biq:data/examples/bbbb2222.json": JSON.stringify(completePack()),
+  }, change), []);
+});
