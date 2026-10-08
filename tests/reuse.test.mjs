@@ -1031,6 +1031,74 @@ test("a reused catalog insert keeps the source position", () => {
   assert.deepEqual(result.changes[1].value, { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" });
 });
 
+test("a reused catalog insert adopts the caller's position", () => {
+  const texts = {
+    "principles:data/teaching/generic/index.json": JSON.stringify({
+      principles: [{ id: 8001, slug: "customer-obsession", file: "customer-obsession.json" }],
+    }),
+    "principles:data/teaching/amazon/index.json": JSON.stringify({
+      principles: [{ id: 1001, slug: "customer-obsession", file: "customer-obsession.json" }],
+    }),
+  };
+  const result = reuse.expand([
+    {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["principles"],
+      index: 1,
+      seq: 1,
+      value: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+      company: "generic",
+    },
+    {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/amazon/index.json",
+      path: ["principles"],
+      index: 0,
+      seq: 2,
+      value: { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+      company: "amazon",
+    },
+  ], index, maps, texts);
+  assert.equal(result.ok, true, result.error);
+  const amazon = result.changes.filter((one) => one.file === "data/teaching/amazon/index.json");
+  assert.equal(amazon.length, 1);
+  assert.equal(amazon[0].index, 0);
+  assert.deepEqual(amazon[0].value, { id: 1003, slug: "invent-and-simplify", file: "invent-and-simplify.json" });
+});
+
+test("a reused catalog insert rejects a caller entry that does not match", () => {
+  const result = reuse.expand([
+    {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["principles"],
+      index: 1,
+      seq: 1,
+      value: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+      company: "generic",
+    },
+    {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/amazon/index.json",
+      path: ["principles"],
+      index: 0,
+      seq: 2,
+      value: { id: 9999, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
+      company: "amazon",
+    },
+  ], index, maps, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({ principles: [] }),
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ principles: [] }),
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /does not match/);
+});
+
 test("a mapped teaching record takes the destination principle id", () => {
   const record = { id: 1003, slug: "invent-and-simplify", why: ["Same prose."] };
   const present = reuse.expand([{

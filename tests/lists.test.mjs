@@ -407,6 +407,9 @@ test("a dry run keeps the removed lines of a deleted teaching file", () => {
   assert.equal(deleted.content, null);
   assert.match(deleted.patch, /^-{"id":8006}$/m);
   assert.match(deleted.patch, /^--- a\/data\/teaching\/generic\/invent-and-simplify\.json$/m);
+  assert.match(deleted.patch, /^\+\+\+ \/dev\/null$/m);
+  assert.match(deleted.patch, /^@@ -1,1 \+0,0 @@$/m);
+  assert.equal(deleted.patch.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++")).length, 0);
 });
 
 test("a shared BIQ list cannot grow on the company that only displays it", () => {
