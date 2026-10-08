@@ -45,6 +45,7 @@
     restoredStale: 0,
     pendingOpen: false,
   };
+  var caretAt = {};
 
   var root = document.getElementById("kld-editor");
   if (!root) return;
@@ -113,6 +114,51 @@
 
   function clear(node) {
     while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function isSpace(ch) {
+    return typeof ch === "string" && ch.length === 1 && /\s/.test(ch);
+  }
+
+  function insertToken(text, selection, token) {
+    var value = typeof text === "string" ? text : "";
+    var start;
+    var end;
+    if (!selection || typeof selection.start !== "number" || typeof selection.end !== "number") {
+      start = value.length;
+      end = value.length;
+    } else {
+      start = selection.start;
+      end = selection.end;
+      if (end < start) {
+        var swap = start;
+        start = end;
+        end = swap;
+      }
+      if (start < 0) start = 0;
+      if (end < 0) end = 0;
+      if (start > value.length) start = value.length;
+      if (end > value.length) end = value.length;
+    }
+    var before = value.slice(0, start);
+    var after = value.slice(end);
+    var lead = before.length && !isSpace(before.charAt(before.length - 1)) ? " " : "";
+    var trail = after.length && !isSpace(after.charAt(0)) ? " " : "";
+    var chunk = String(token);
+    var next = before + lead + chunk + trail + after;
+    return {
+      text: next,
+      caret: before.length + lead.length + chunk.length,
+    };
+  }
+
+  function rememberCaret(input) {
+    if (!input || !input.hasAttribute || !input.hasAttribute("data-field")) return;
+    if (typeof input.selectionStart !== "number" || typeof input.selectionEnd !== "number") return;
+    caretAt[input.getAttribute("data-field")] = {
+      start: input.selectionStart,
+      end: input.selectionEnd,
+    };
   }
 
   function clip(text, n) {
@@ -1121,6 +1167,7 @@
   }
 
   function renderEditor() {
+    caretAt = {};
     var pane = document.getElementById("ed-editor");
     if (!pane) return;
     clear(pane);
@@ -1769,8 +1816,19 @@
       S.note = event.target.value;
       return;
     }
-    if (event.target.hasAttribute("data-field")) onField(event.target);
+    if (event.target.hasAttribute("data-field")) {
+      rememberCaret(event.target);
+      onField(event.target);
+    }
   });
+
+  function onCaretEvent(event) {
+    rememberCaret(event.target);
+  }
+  root.addEventListener("keyup", onCaretEvent);
+  root.addEventListener("click", onCaretEvent);
+  root.addEventListener("select", onCaretEvent);
+  root.addEventListener("blur", onCaretEvent, true);
 
   root.addEventListener("change", function (event) {
     if (event.target.id === "ed-group") {
@@ -1806,7 +1864,13 @@
       var input = document.getElementById("ed-field-" + insert);
       if (input) {
         var token = "{lp:" + event.target.value + "}";
-        input.value = input.value ? input.value.replace(/\s*$/, " ") + token : token;
+        var placed = insertToken(input.value, caretAt[insert] || null, token);
+        input.value = placed.text;
+        input.focus();
+        if (typeof input.setSelectionRange === "function") {
+          input.setSelectionRange(placed.caret, placed.caret);
+        }
+        caretAt[insert] = { start: placed.caret, end: placed.caret };
         onField(input);
       }
       event.target.value = "";

@@ -26,6 +26,8 @@ Facet is the editor. It lists facets, BIQ questions, concrete questions, teachin
 
 The save function stays on the host, because that is where the token lives. `lib/` is the allowlist, the patch, and the abuse caps. The host runs that code on the server. The browser is not the authority. Do not edit the host's copy of those files. Edit them here.
 
+A principle link is inserted at the field's last caret. The menu takes focus before it changes, so the caret is remembered on input, keyup, click, select, and blur. A space is added only when the neighbor is not already whitespace. A field that never had focus gets the token at the end.
+
 `card.json` is status beta and unlisted. Do not drop unlisted to put the app on the catalog grid unless Tig says so.
 
 The label on the pull requests this app opens is `editor-submission`. It already exists on kindel/principles and kindel/biq. Do not rename it. The token does not need Issues write to apply that label.

@@ -59,8 +59,8 @@ HUGO_MODULE_REPLACEMENTS="github.com/kindel/facet -> ../facet"
 ## Tests
 
 ```
-node --check js/facet.js lib/allow.js lib/patch.js lib/plan.js lib/rules.js lib/guard.js
-node --test tests/patch.test.mjs tests/allow.test.mjs
+node --check js/facet.js lib/allow.js lib/patch.js lib/plan.js lib/rules.js lib/guard.js lib/insert.js
+node --test tests/patch.test.mjs tests/allow.test.mjs tests/insert.test.mjs
 ```
 
 ## License
