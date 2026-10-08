@@ -408,11 +408,50 @@
         if (meta && typeof meta.file === "string") add("principles:" + meta.file);
       });
     }
+    function addPrinciple(pid) {
+      if (typeof pid !== "number" || (pid | 0) !== pid) return;
+      var meta = S.byId && S.byId[pid];
+      if (meta && typeof meta.file === "string") add("principles:" + meta.file);
+    }
+    function addFacetPrinciples(facet) {
+      if (!facet || !Array.isArray(facet.principles)) return;
+      facet.principles.forEach(addPrinciple);
+    }
+    function hasSourceRef(facet) {
+      var rows = facet && facet.rows;
+      if (!Array.isArray(rows)) return false;
+      return rows.some(function (row) {
+        return !!(row && typeof row.principle === "number" && (row.principle | 0) === row.principle && !Object.prototype.hasOwnProperty.call(row, "situation"));
+      });
+    }
     (changes || []).forEach(function (change) {
       if (!change || !change.repo || !change.file) return;
       if (change.op !== "create") add(change.repo + ":" + change.file);
-      if (change.file === "data/facets.json" && (change.op === "insert" || change.op === "move")) {
-        addSourceRecords(change.op === "move" ? change.before : change.value);
+      if (change.file === "data/facets.json" && (change.op === "insert" || change.op === "remove" || change.op === "move")) {
+        if (change.op !== "remove") addSourceRecords(change.op === "move" ? change.before : change.value);
+        var loadedFacets = S.files["principles:data/facets.json"];
+        var facetList = loadedFacets && loadedFacets.json && Array.isArray(loadedFacets.json.facets) ? loadedFacets.json.facets : [];
+        facetList.forEach(function (facet) {
+          if (!hasSourceRef(facet)) addFacetPrinciples(facet);
+        });
+        var path = change.path;
+        var wholeFacet = Array.isArray(path) && path.length === 1 && path[0] === "facets";
+        if (wholeFacet) {
+          if (change.op === "insert") addFacetPrinciples(change.value);
+        } else {
+          var step = path && path[1];
+          var facetId = step && step.id;
+          var matched = false;
+          if (typeof facetId === "string") {
+            facetList.forEach(function (facet) {
+              if (facet && facet.id === facetId) {
+                addFacetPrinciples(facet);
+                matched = true;
+              }
+            });
+          }
+          if (!matched) addFacetPrinciples(change.op === "insert" ? change.value : change.before);
+        }
       }
       var facetChange = change.file === "data/facets.json" || change.listKind === "facet" || (Array.isArray(change.path) && change.path[change.path.length - 1] === "facets");
       var teachingChange = change.repo === "principles" && change.file.indexOf("data/teaching/") === 0;

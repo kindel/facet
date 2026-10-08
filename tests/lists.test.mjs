@@ -669,7 +669,101 @@ test("a save cannot produce two facets with the same id", () => {
     principles: [1001],
     rows: [generatedRow],
   });
-  assert.equal(rules.structuralShape(distinct, "data/facets.json").length, 0);
+  const emptyRows = { "1001": Object.create(null), "1002": Object.create(null) };
+  assert.equal(rules.structuralShape(distinct, "data/facets.json", false, { rowsByPrinciple: emptyRows }).length, 0);
+});
+
+test("removing the last source ref is refused when a listed principle has record rows", () => {
+  const source = { principle: 1002, id: "knowing-what-you-own" };
+  const before = facetDoc([source, generatedRow]);
+  function removeSource(files) {
+    return plan.prepare(files, [{
+      op: "remove",
+      repo: "principles",
+      file: "data/facets.json",
+      path: ["facets", { id: "ownership" }, "rows"],
+      index: 0,
+      before: source,
+    }]);
+  }
+  const removed = removeSource(sourceFiles(before));
+  assert.equal(removed.ok, false);
+  assert.match(removed.errors[0].error, /Facet ownership needs at least one source ref/);
+  const unloaded = removeSource({
+    "principles:data/facets.json": JSON.stringify(before),
+    "principles:data/index.json": sourceFiles(before)["principles:data/index.json"],
+  });
+  assert.equal(unloaded.ok, false);
+  assert.match(unloaded.errors[0].error, /not loaded/);
+  const emptyFiles = sourceFiles(before);
+  emptyFiles["principles:data/amazon/ownership.json"] = JSON.stringify({ id: 1002, rows: [] });
+  const allowed = removeSource(emptyFiles);
+  assert.equal(allowed.ok, true, JSON.stringify(allowed.errors));
+  const second = { principle: 1002, id: "second-row" };
+  const keptDoc = facetDoc([source, second, generatedRow]);
+  const keptFiles = sourceFiles(keptDoc);
+  keptFiles["principles:data/amazon/ownership.json"] = JSON.stringify({
+    id: 1002,
+    rows: [{ id: "knowing-what-you-own" }, { id: "second-row" }],
+  });
+  const kept = plan.prepare(keptFiles, [{
+    op: "remove",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets", { id: "ownership" }, "rows"],
+    index: 0,
+    before: source,
+  }]);
+  assert.equal(kept.ok, true, JSON.stringify(kept.errors));
+});
+
+test("a generated-only facet is refused when a listed principle has record rows", () => {
+  const before = facetDoc([{ principle: 1002, id: "knowing-what-you-own" }, generatedRow]);
+  const inserted = plan.prepare(sourceFiles(before), [{
+    op: "insert",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets"],
+    index: 1,
+    value: {
+      id: "customer-obsession",
+      label: "customer obsession",
+      principles: [1001],
+      rows: [generatedRow],
+    },
+  }]);
+  assert.equal(inserted.ok, false);
+  assert.match(inserted.errors[0].error, /Facet customer-obsession needs at least one source ref/);
+  const mixed = {
+    version: 1,
+    facets: [
+      before.facets[0],
+      {
+        id: "customer-obsession",
+        label: "customer obsession",
+        principles: [1001],
+        rows: [generatedRow],
+      },
+    ],
+  };
+  const blocked = plan.prepare(sourceFiles(mixed), [{
+    op: "move",
+    repo: "principles",
+    file: "data/facets.json",
+    path: ["facets", { id: "ownership" }, "rows"],
+    index: 0,
+    to: 1,
+    before: { principle: 1002, id: "knowing-what-you-own" },
+  }]);
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.errors[0].error, /Facet customer-obsession needs at least one source ref/);
+  const allowedDoc = JSON.parse(JSON.stringify(mixed));
+  assert.equal(rules.structuralShape(allowedDoc, "data/facets.json", false, {
+    rowsByPrinciple: {
+      "1002": { "knowing-what-you-own": true },
+      "1001": Object.create(null),
+    },
+  }).length, 0);
 });
 
 const records = { ownership: 8002, "earn-trust": 8003, "deliver-results": 8004 };
