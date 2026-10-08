@@ -532,11 +532,80 @@ test("a new facet row has to be a complete calibration row", () => {
   assert.match(bad.join("\n"), /situation/);
 });
 
+const records = { ownership: 8002, "earn-trust": 8003, "deliver-results": 8004 };
+
 test("a new teaching record checks each entry", () => {
   const doc = JSON.parse(teaching(8));
   doc.examples = [{}, {}];
-  const errors = rules.structuralShape(doc, "data/teaching/generic/ownership.json", true, { slugs: slugs.generic });
+  const errors = rules.structuralShape(doc, "data/teaching/generic/ownership.json", true, { slugs: slugs.generic, records: records });
   assert.match(errors.join("\n"), /example needs a title/);
+});
+
+test("a new teaching record has to match its principle", () => {
+  const doc = JSON.parse(teaching(8));
+  const file = "data/teaching/generic/ownership.json";
+  const spec = { slugs: slugs.generic, records: records };
+  assert.equal(rules.structuralShape(doc, file, true, spec).length, 0);
+  const missingId = JSON.parse(teaching(8));
+  delete missingId.id;
+  assert.match(rules.structuralShape(missingId, file, true, spec).join("\n"), /numeric id/);
+  const boolId = JSON.parse(teaching(8));
+  boolId.id = true;
+  assert.match(rules.structuralShape(boolId, file, true, spec).join("\n"), /numeric id/);
+  const wrongSlug = JSON.parse(teaching(8));
+  wrongSlug.slug = "earn-trust";
+  assert.match(rules.structuralShape(wrongSlug, file, true, spec).join("\n"), /slug has to match its file/);
+  const unknown = rules.structuralShape(doc, file, true, { slugs: slugs.generic, records: { "earn-trust": 8003 } });
+  assert.match(unknown.join("\n"), /no principle named ownership/);
+  const wrongId = JSON.parse(teaching(8));
+  wrongId.id = 1111;
+  assert.match(rules.structuralShape(wrongId, file, true, spec).join("\n"), /id does not match the principle/);
+  const unloaded = rules.structuralShape(doc, file, true, { slugs: slugs.generic });
+  assert.match(unloaded.join("\n"), /principle list for this company is missing/);
+  const existing = JSON.parse(teaching(8));
+  existing.id = "8002";
+  existing.slug = "not-the-file";
+  const kept = rules.structuralShape(existing, file, false, spec);
+  assert.equal(kept.join("\n").indexOf("numeric id"), -1);
+  assert.equal(kept.join("\n").indexOf("match its file"), -1);
+  const indexText = JSON.stringify({
+    companies: [{
+      id: "generic",
+      principles: [
+        { id: 8002, slug: "ownership" },
+        { id: 8003, slug: "earn-trust" },
+        { id: 8004, slug: "deliver-results" },
+      ],
+    }],
+  });
+  const create = {
+    op: "create",
+    repo: "principles",
+    file: file,
+    path: [],
+    value: JSON.parse(teaching(8)),
+    company: "generic",
+  };
+  const catalog = {
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: [],
+    value: {
+      title: "Universal: a user's manual",
+      principles: [{ id: 8002, slug: "ownership", file: "ownership.json" }],
+      blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+    },
+    company: "generic",
+  };
+  const prepared = plan.prepare({ "principles:data/index.json": indexText }, [create, catalog], slugs);
+  assert.equal(prepared.ok, true, prepared.ok ? "" : prepared.errors[0].error);
+  const mismatched = JSON.parse(JSON.stringify(create));
+  mismatched.value = JSON.parse(teaching(8));
+  mismatched.value.id = 1111;
+  const refused = plan.prepare({ "principles:data/index.json": indexText }, [mismatched], slugs);
+  assert.equal(refused.ok, false);
+  assert.match(refused.errors[0].error, /id does not match the principle/);
 });
 
 test("adding teaching lists the record, and a catalog entry needs the file", () => {

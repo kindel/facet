@@ -1000,3 +1000,64 @@ test("two agreeing edits of the same reused field stay as the caller sent them",
   assert.equal(result.ok, true);
   assert.equal(result.changes.length, 2);
 });
+
+test("a three-company reuse group keeps one copy of a shared list edit", () => {
+  const grouped = {
+    companies: index.companies.concat([
+      { id: "arm", principles: [{ id: 3003, slug: "invent-and-simplify" }] },
+    ]),
+  };
+  const groupMaps = maps.concat([{
+    source: "amazon",
+    target: "arm",
+    pairs: [{ sourceSlug: "invent-and-simplify", targetIds: [3003] }],
+  }]);
+  const files = Object.assign({}, filesFor(BEFORE), {
+    "principles:data/teaching/arm/invent-and-simplify.json": teach(3003, BEFORE),
+  });
+  function listed(company, seq, op, extra) {
+    return Object.assign({
+      op: op,
+      repo: "principles",
+      file: "data/teaching/" + company + "/invent-and-simplify.json",
+      path: ["deepen"],
+      seq: seq,
+      company: company,
+    }, extra);
+  }
+  const shared = reuse.expand([
+    listed("generic", 1, "insert", { index: 0, value: "First?" }),
+    listed("amazon", 2, "insert", { index: 0, value: "First?" }),
+  ], grouped, groupMaps, files);
+  assert.equal(shared.ok, true, shared.error);
+  assert.equal(shared.changes.length, 3);
+  const armInserts = shared.changes.filter((one) => one.file.indexOf("/arm/") !== -1);
+  assert.equal(armInserts.length, 1);
+  assert.equal(armInserts[0].op, "insert");
+  assert.equal(armInserts[0].value, "First?");
+  const repeated = reuse.expand([
+    listed("generic", 1, "insert", { index: 0, value: "First?" }),
+    listed("generic", 2, "insert", { index: 0, value: "First?" }),
+  ], grouped, groupMaps, files);
+  assert.equal(repeated.ok, true, repeated.error);
+  assert.equal(repeated.changes.filter((one) => one.file.indexOf("/arm/") !== -1 && one.op === "insert").length, 2);
+  assert.equal(repeated.changes.filter((one) => one.file.indexOf("/amazon/") !== -1 && one.op === "insert").length, 2);
+  const removed = reuse.expand([
+    listed("generic", 1, "remove", { index: 1, before: BEFORE }),
+    listed("amazon", 2, "remove", { index: 1, before: BEFORE }),
+  ], grouped, groupMaps, files);
+  assert.equal(removed.ok, true, removed.error);
+  const armRemoves = removed.changes.filter((one) => one.file.indexOf("/arm/") !== -1);
+  assert.equal(armRemoves.length, 1);
+  assert.equal(armRemoves[0].op, "remove");
+  assert.equal(armRemoves[0].before, BEFORE);
+  const moved = reuse.expand([
+    listed("generic", 1, "move", { index: 0, to: 2, before: "Other question?" }),
+    listed("amazon", 2, "move", { index: 0, to: 2, before: "Other question?" }),
+  ], grouped, groupMaps, files);
+  assert.equal(moved.ok, true, moved.error);
+  const armMoves = moved.changes.filter((one) => one.file.indexOf("/arm/") !== -1);
+  assert.equal(armMoves.length, 1);
+  assert.equal(armMoves[0].op, "move");
+  assert.equal(armMoves[0].to, 2);
+});
