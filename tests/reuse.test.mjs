@@ -1681,6 +1681,24 @@ test("appended further reading on the source is not copied to the target", () =>
   assert.equal(removed.changes.length, 1);
 });
 
+test("an empty further reading list is not treated as a copied prefix", () => {
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: [] }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading.concat([extraReading]) }),
+  };
+  const result = reuse.expand([{
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["blog"],
+    index: 2,
+    value: extraReading,
+    company: "generic",
+  }], index, maps, files);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /already differs/);
+});
+
 test("a copied reading edit still lands on every matching file when extras follow", () => {
   const files = {
     "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
