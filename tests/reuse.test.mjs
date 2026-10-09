@@ -1681,6 +1681,38 @@ test("appended further reading on the source is not copied to the target", () =>
   assert.equal(removed.changes.length, 1);
 });
 
+test("appending on a mid-chain company still copies upstream", () => {
+  const grouped = {
+    companies: index.companies.concat([
+      { id: "arm", principles: [{ id: 3003, slug: "invent-and-simplify" }] },
+    ]),
+  };
+  const groupMaps = maps.concat([{
+    source: "amazon",
+    target: "arm",
+    pairs: [{ sourceSlug: "invent-and-simplify", targetIds: [3003] }],
+  }]);
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/arm/index.json": JSON.stringify({ blog: sharedReading }),
+  };
+  const result = reuse.expand([{
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: ["blog"],
+    index: 1,
+    value: extraReading,
+    company: "amazon",
+  }], grouped, groupMaps, files);
+  assert.equal(result.ok, true, result.error);
+  const generic = result.changes.filter((one) => one.file.indexOf("/generic/") !== -1);
+  const arm = result.changes.filter((one) => one.file.indexOf("/arm/") !== -1);
+  assert.equal(generic.length, 1, "amazon append copies to generic");
+  assert.equal(arm.length, 0, "amazon extra does not copy to arm");
+});
+
 test("appending further reading on the copied target still copies to the source", () => {
   const files = {
     "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
