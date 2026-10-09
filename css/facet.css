@@ -4,6 +4,22 @@
   --tool-page-width: 1240px;
 }
 
+.facet-explainer {
+  margin: 0 0 0.65rem;
+  max-width: 46rem;
+  color: var(--kld-muted, #59636f);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 480px) {
+  .facet-explainer {
+    margin-bottom: 0.4rem;
+    font-size: 0.78rem;
+    line-height: 1.32;
+  }
+}
+
 .kld-editor,
 .ed-app {
   color: var(--kld-ink, #17202b);
