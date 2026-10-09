@@ -121,6 +121,58 @@ test("generic calibration rows cannot change in count", () => {
   assert.equal(allow.assess(Object.assign({}, insert, { op: "remove", before: insert.value })).ok, false);
   assert.equal(allow.assess(Object.assign({}, insert, { file: "data/amazon/ownership.json" })).ok, true);
   assert.equal(allow.assess(Object.assign({}, insert, { file: "data/dawn/ownership.json" })).ok, true);
+  assert.equal(allow.assess(Object.assign({}, insert, { file: "data/blue-origin/ownership.json" })).ok, true);
+});
+
+test("a published company missing from the allowlist is reported", () => {
+  const published = [
+    "generic",
+    "amazon",
+    "arm",
+    "coupang",
+    "delivery-hero",
+    "gitlab",
+    "dawn",
+    "toyota",
+    "blue-origin",
+  ];
+  assert.deepEqual(allow.missingCompanies(published), []);
+  assert.deepEqual(allow.missingCompanies(published.concat("blue-origin")), []);
+  assert.deepEqual(allow.missingCompanies(published.concat("new-co")), ["new-co"]);
+  assert.deepEqual(allow.missingCompanies(["__proto__", "__proto__"]), ["__proto__"]);
+  assert.throws(() => allow.missingCompanies(null), /list of ids/);
+});
+
+test("blue origin records, teaching, and questions can be saved", () => {
+  assert.equal(allow.assess({
+    repo: "principles",
+    file: "data/blue-origin/customer-focus.json",
+    path: ["rows", { id: "the-work" }, "under"],
+    before: "Does less.",
+    after: "Does a bit less.",
+  }).ok, true);
+  assert.equal(allow.assess({
+    repo: "principles",
+    file: "data/teaching/blue-origin/customer-focus.json",
+    path: ["why", 0],
+    before: "Because.",
+    after: "Because it matters.",
+  }).ok, true);
+  assert.equal(allow.assess({
+    repo: "biq",
+    file: "data/questions.json",
+    path: ["companies", { id: "blue-origin" }, "principles", { id: 1001 }, "questions", { id: "abcd1234" }, "text"],
+    before: "Who?",
+    after: "Who decides?",
+  }).ok, true);
+  assert.equal(allow.assess({
+    op: "insert",
+    repo: "biq",
+    file: "data/questions.json",
+    path: ["companies", { id: "blue-origin" }, "principles", { id: 1001 }, "questions"],
+    index: 0,
+    value: { text: "Who?" },
+  }).ok, true);
 });
 
 test("inherited names are not company ids", () => {
