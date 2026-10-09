@@ -1681,6 +1681,45 @@ test("appended further reading on the source is not copied to the target", () =>
   assert.equal(removed.changes.length, 1);
 });
 
+test("appending further reading on the copied target still copies to the source", () => {
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading }),
+  };
+  const result = reuse.expand([{
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: ["blog"],
+    index: 1,
+    value: extraReading,
+    company: "amazon",
+  }], index, maps, files);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.changes.length, 2);
+  assert.equal(result.changes[1].file, "data/teaching/generic/index.json");
+  assert.equal(result.changes[1].index, 1);
+});
+
+test("a further reading extra cannot move into the copied prefix", () => {
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading.concat([extraReading]) }),
+  };
+  const result = reuse.expand([{
+    op: "move",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["blog"],
+    index: 1,
+    to: 0,
+    before: extraReading,
+    company: "generic",
+  }], index, maps, files);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /copied prefix/);
+});
+
 test("an empty further reading list is not treated as a copied prefix", () => {
   const files = {
     "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: [] }),
