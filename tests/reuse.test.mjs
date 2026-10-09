@@ -1624,3 +1624,78 @@ test("projection counts repeated structural edits and keeps one replacement per 
   assert.equal(replaced.changes, 2);
   assert.equal(replaced.files, 2);
 });
+
+const sharedReading = [
+  { title: "Copied", url: "https://kindel.com/copied", note: "The copied source." },
+];
+const extraReading = {
+  title: "Extra",
+  url: "https://kindel.com/extra",
+  note: "Source-only reading.",
+};
+
+test("appended further reading on the source is not copied to the target", () => {
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading }),
+  };
+  const inserted = reuse.expand([{
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["blog"],
+    index: 1,
+    value: extraReading,
+    company: "generic",
+  }], index, maps, files);
+  assert.equal(inserted.ok, true, inserted.error);
+  assert.equal(inserted.changes.length, 1);
+  assert.equal(inserted.changes[0].file, "data/teaching/generic/index.json");
+
+  const withExtra = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading.concat([extraReading]) }),
+  };
+  const edited = reuse.expand([{
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["blog", 1, "note"],
+    before: extraReading.note,
+    after: "A clearer extra note.",
+    company: "generic",
+  }], index, maps, withExtra);
+  assert.equal(edited.ok, true, edited.error);
+  assert.equal(edited.changes.length, 1);
+  assert.equal(edited.changes[0].file, "data/teaching/generic/index.json");
+
+  const removed = reuse.expand([{
+    op: "remove",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["blog"],
+    index: 1,
+    before: extraReading,
+    company: "generic",
+  }], index, maps, withExtra);
+  assert.equal(removed.ok, true, removed.error);
+  assert.equal(removed.changes.length, 1);
+});
+
+test("a copied reading edit still lands on every matching file when extras follow", () => {
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading.concat([extraReading]) }),
+  };
+  const result = reuse.expand([{
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: ["blog", 0, "note"],
+    before: sharedReading[0].note,
+    after: "A clearer copied note.",
+    company: "amazon",
+  }], index, maps, files);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.changes.length, 2);
+  assert.equal(result.changes[1].file, "data/teaching/generic/index.json");
+  assert.equal(result.changes[1].after, "A clearer copied note.");
+});
