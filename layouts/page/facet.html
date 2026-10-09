@@ -16,7 +16,7 @@
   {{ with index .Site.Data.tools "facet" }}
     {{ partial "app-kit/frame-start.html" (dict "card" . "page" $) }}
   {{ end }}
-  <p class="facet-explainer">Facet is the editor for Kindel Leadership Development content behind Porridge and BIQ: facets, BIQ questions, questions that make a principle concrete, teaching, essays, and further reading. Pick a company and a principle, then edit, add, remove, or move items. Save batches your changes into one pull request per repo for review, so nothing on the site changes until it is merged.</p>
+  <p class="facet-explainer">Facet is the editor for Kindel Leadership Development content behind Porridge and BIQ: facets, BIQ questions, questions that make a principle concrete, teaching, and further reading (links to essays). Pick a company and a principle, then edit, add, remove, or move items. Save batches your changes into one pull request per repo for review, so nothing on the site changes until it is merged.</p>
   <div id="kld-editor"></div>
   {{ partial "app-kit/frame-end.html" . }}
 </article>
