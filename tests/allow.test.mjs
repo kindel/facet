@@ -124,6 +124,25 @@ test("generic calibration rows cannot change in count", () => {
   assert.equal(allow.assess(Object.assign({}, insert, { file: "data/blue-origin/ownership.json" })).ok, true);
 });
 
+test("a published company missing from the allowlist is reported", () => {
+  const published = [
+    "generic",
+    "amazon",
+    "arm",
+    "coupang",
+    "delivery-hero",
+    "gitlab",
+    "dawn",
+    "toyota",
+    "blue-origin",
+  ];
+  assert.deepEqual(allow.missingCompanies(published), []);
+  assert.deepEqual(allow.missingCompanies(published.concat("blue-origin")), []);
+  assert.deepEqual(allow.missingCompanies(published.concat("new-co")), ["new-co"]);
+  assert.deepEqual(allow.missingCompanies(["__proto__", "__proto__"]), ["__proto__"]);
+  assert.throws(() => allow.missingCompanies(null), /list of ids/);
+});
+
 test("blue origin records, teaching, and questions can be saved", () => {
   assert.equal(allow.assess({
     repo: "principles",
