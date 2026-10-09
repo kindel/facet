@@ -1983,6 +1983,91 @@ test("a source extra move follows a target append in the same save", () => {
   assert.equal(amazonMoves.length, 0);
 });
 
+test("a source extra insert follows a target append in the same save", () => {
+  const added = { title: "Added", url: "https://kindel.com/added", note: "Added on the target." };
+  const inserted = { title: "Inserted", url: "https://kindel.com/inserted", note: "Inserted among extras." };
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading.concat([extraReading]) }),
+  };
+  const result = reuse.expand([
+    {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/amazon/index.json",
+      path: ["blog"],
+      index: 1,
+      value: added,
+      company: "amazon",
+    },
+    {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["blog"],
+      index: 1,
+      value: inserted,
+      company: "generic",
+    },
+  ], index, maps, files);
+  assert.equal(result.ok, true, result.error);
+  const genericInserts = result.changes.filter((one) => one.op === "insert" && one.file.indexOf("/generic/") !== -1);
+  const amazonExtra = result.changes.filter((one) => one.op === "insert" && one.file.indexOf("/amazon/") !== -1 && one.value && one.value.url === inserted.url);
+  assert.equal(genericInserts.length, 2);
+  assert.equal(genericInserts[1].index, 2);
+  assert.equal(genericInserts[1].value.url, inserted.url);
+  assert.equal(amazonExtra.length, 0);
+});
+
+test("a source extra field edit follows a target append in the same save", () => {
+  const added = { title: "Added", url: "https://kindel.com/added", note: "Added on the target." };
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading.concat([extraReading]) }),
+  };
+  const result = reuse.expand([
+    {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/amazon/index.json",
+      path: ["blog"],
+      index: 1,
+      value: added,
+      company: "amazon",
+    },
+    {
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["blog", 1, "note"],
+      before: extraReading.note,
+      after: "A clearer extra note.",
+      company: "generic",
+    },
+  ], index, maps, files);
+  assert.equal(result.ok, true, result.error);
+  const notes = result.changes.filter((one) => one.path && one.path[2] === "note");
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].file, "data/teaching/generic/index.json");
+  assert.equal(notes[0].path[1], 2);
+});
+
+test("a longer list on the downstream company is refused from that side", () => {
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading.concat([extraReading]) }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading }),
+  };
+  const result = reuse.expand([{
+    repo: "principles",
+    file: "data/teaching/amazon/index.json",
+    path: ["blog", 0, "note"],
+    before: sharedReading[0].note,
+    after: "A clearer copied note.",
+    company: "amazon",
+  }], index, maps, files);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /already differs/);
+});
+
 test("a url-selected extra stays on the source", () => {
   const files = {
     "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
