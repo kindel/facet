@@ -1713,6 +1713,65 @@ test("appending on a mid-chain company still copies upstream", () => {
   assert.equal(arm.length, 0, "amazon extra does not copy to arm");
 });
 
+test("a root-source append does not copy through a chain", () => {
+  const grouped = {
+    companies: index.companies.concat([
+      { id: "arm", principles: [{ id: 3003, slug: "invent-and-simplify" }] },
+    ]),
+  };
+  const groupMaps = maps.concat([{
+    source: "amazon",
+    target: "arm",
+    pairs: [{ sourceSlug: "invent-and-simplify", targetIds: [3003] }],
+  }]);
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/arm/index.json": JSON.stringify({ blog: sharedReading }),
+  };
+  const inserted = reuse.expand([{
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["blog"],
+    index: 1,
+    value: extraReading,
+    company: "generic",
+  }], grouped, groupMaps, files);
+  assert.equal(inserted.ok, true, inserted.error);
+  assert.equal(inserted.changes.length, 1);
+  assert.equal(inserted.changes[0].file, "data/teaching/generic/index.json");
+
+  const withExtra = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: sharedReading.concat([extraReading]) }),
+    "principles:data/teaching/arm/index.json": JSON.stringify({ blog: sharedReading }),
+  };
+  const edited = reuse.expand([{
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["blog", 1, "note"],
+    before: extraReading.note,
+    after: "A clearer extra note.",
+    company: "generic",
+  }], grouped, groupMaps, withExtra);
+  assert.equal(edited.ok, true, edited.error);
+  assert.equal(edited.changes.length, 1);
+  assert.equal(edited.changes[0].file, "data/teaching/generic/index.json");
+
+  const copied = reuse.expand([{
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["blog", 0, "note"],
+    before: sharedReading[0].note,
+    after: "A clearer copied note.",
+    company: "generic",
+  }], grouped, groupMaps, files);
+  assert.equal(copied.ok, true, copied.error);
+  assert.equal(copied.changes.filter((one) => one.file.indexOf("/amazon/") !== -1).length, 1);
+  assert.equal(copied.changes.filter((one) => one.file.indexOf("/arm/") !== -1).length, 1);
+});
+
 test("appending further reading on the copied target still copies to the source", () => {
   const files = {
     "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: sharedReading }),
