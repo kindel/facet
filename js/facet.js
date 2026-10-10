@@ -68,6 +68,28 @@
   var root = document.getElementById("kld-editor");
   if (!root) return;
 
+  var lastCompany = "";
+
+  function companyKnown(id) {
+    for (var i = 0; i < S.companies.length; i++) {
+      if (S.companies[i].id === id) return true;
+    }
+    return false;
+  }
+
+  function trackCompany(id, source) {
+    if (!companyKnown(id) || typeof window.kldTrack !== "function") return;
+    window.kldTrack("kld_company", {
+      app: "facet",
+      company: id,
+      previous_company: lastCompany,
+      source: source
+    });
+    lastCompany = id;
+  }
+
+  if (typeof window.kldTrack === "function") window.kldTrack("app_view", { app: "facet" });
+
   function readFilters() {
     var u = new URL(window.location.href);
     function list(name) {
@@ -2408,11 +2430,13 @@
       var attr = kind === "companies" ? "data-company" : "data-principle";
       var id = event.target.getAttribute(attr);
       var list = S.filters[kind];
+      var turnedOn = event.target.checked && list.indexOf(id) === -1;
       if (event.target.checked) {
         if (list.indexOf(id) === -1) list.push(id);
       } else {
         S.filters[kind] = list.filter(function (value) { return value !== id; });
       }
+      if (kind === "companies" && turnedOn) trackCompany(id, "picker");
       writeFilters(false);
       paint();
       return;
@@ -2473,9 +2497,13 @@
   });
 
   window.addEventListener("popstate", function () {
+    var before = S.filters.companies.slice();
     S.filters = readFilters();
     S.pendingOpen = false;
     paint();
+    S.filters.companies.forEach(function (id) {
+      if (before.indexOf(id) === -1) trackCompany(id, "url");
+    });
   });
   window.addEventListener("resize", applyNarrow);
 
@@ -4502,6 +4530,7 @@
       S.ready = true;
       S.progress = "";
       paint();
+      S.filters.companies.forEach(function (id) { trackCompany(id, "url"); });
     } catch (err) {
       S.error = "Could not load the content from GitHub. " + (err && err.message ? err.message : "");
       var status = document.getElementById("ed-status");
