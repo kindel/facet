@@ -88,6 +88,16 @@
     lastCompany = id;
   }
 
+  function trackUrlCompanies(ids, before) {
+    var seen = {};
+    (ids || []).forEach(function (id) {
+      if (!id || seen[id]) return;
+      seen[id] = true;
+      if (before && before.indexOf(id) !== -1) return;
+      trackCompany(id, "url");
+    });
+  }
+
   if (typeof window.kldTrack === "function") window.kldTrack("app_view", { app: "facet" });
 
   function readFilters() {
@@ -2501,9 +2511,7 @@
     S.filters = readFilters();
     S.pendingOpen = false;
     paint();
-    S.filters.companies.forEach(function (id) {
-      if (before.indexOf(id) === -1) trackCompany(id, "url");
-    });
+    trackUrlCompanies(S.filters.companies, before);
   });
   window.addEventListener("resize", applyNarrow);
 
@@ -4489,6 +4497,9 @@
     renderShell();
     try {
       keep("principles", "data/index.json", await fetchText(RAW.principles + "data/index.json"));
+      var indexEarly = S.files["principles:data/index.json"].json;
+      S.companies = (indexEarly && indexEarly.companies) || [];
+      trackUrlCompanies(S.filters.companies);
       keep("principles", "data/facets.json", await fetchText(RAW.principles + "data/facets.json"));
       keep("biq", "data/questions.json", await fetchText(RAW.biq + "data/questions.json"));
       await loadMaps();
@@ -4530,7 +4541,6 @@
       S.ready = true;
       S.progress = "";
       paint();
-      S.filters.companies.forEach(function (id) { trackCompany(id, "url"); });
     } catch (err) {
       S.error = "Could not load the content from GitHub. " + (err && err.message ? err.message : "");
       var status = document.getElementById("ed-status");
