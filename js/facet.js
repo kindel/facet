@@ -89,7 +89,8 @@
   }
 
   function trackUrlCompanies(ids, before) {
-    var seen = {};
+    // Own keys only. A plain object treats constructor as already seen.
+    var seen = Object.create(null);
     (ids || []).forEach(function (id) {
       if (!id || seen[id]) return;
       seen[id] = true;

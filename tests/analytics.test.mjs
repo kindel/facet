@@ -317,6 +317,21 @@ test("picker check sends source picker and uncheck sends nothing", async () => {
   ]);
 });
 
+test("an inherited object name is still sent as a company id", async () => {
+  const index = {
+    companies: INDEX.companies.concat([{ id: "constructor", name: "Constructor", principles: [] }]),
+  };
+  const page = boot("https://kindel.com/kld/apps/facet/?c=constructor,constructor", async (url) => {
+    const target = String(url);
+    if (target.endsWith("data/index.json")) return jsonResponse(index, 200);
+    return failResponse(500);
+  });
+  await settle();
+  assert.deepEqual(companies(page.calls), [
+    { app: "facet", company: "constructor", previous_company: "", source: "url" },
+  ]);
+});
+
 test("popstate sends a newly added company once", async () => {
   const page = boot("https://kindel.com/kld/apps/facet/?c=amazon", async (url) => {
     const target = String(url);
