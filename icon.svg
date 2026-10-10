@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Facet">
+  <!-- Brilliant-cut diamond from the side. Table, crown, girdle, pavilion to a point. -->
+  <rect width="32" height="32" fill="#17202b"/>
+  <g stroke="#17202b" stroke-width="0.65" stroke-linejoin="miter" stroke-miterlimit="8">
+    <polygon fill="#ffffff" points="12,7.2 16,7.2 16,12.2"/>
+    <polygon fill="#dce7dc" points="16,7.2 20,7.2 16,12.2"/>
+    <polygon fill="#dce7dc" points="12,7.2 16,12.2 6,12.2"/>
+    <polygon fill="#b5532f" points="20,7.2 26,12.2 16,12.2"/>
+    <polygon fill="#f4f6f3" points="6,12.2 11.2,12.2 16,24.6"/>
+    <polygon fill="#ffffff" points="11.2,12.2 16,12.2 16,24.6"/>
+    <polygon fill="#dce7dc" points="16,12.2 20.8,12.2 16,24.6"/>
+    <polygon fill="#dce7dc" points="20.8,12.2 26,12.2 16,24.6"/>
+  </g>
+  <path d="M8,12.2 H24" fill="none" stroke="#ffffff" stroke-width="0.9" stroke-linecap="butt"/>
+</svg>
