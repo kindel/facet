@@ -4,7 +4,7 @@ Browse every facet, every BIQ question, and the questions that make a principle 
 
 ## App card
 
-This repo ships `card.json` and `icon.png` as the listing for any host (kindel.com, iOS, Android).
+This repo ships `card.json`, `icon.svg`, and `icon.png` as the listing for any host (kindel.com, iOS, Android). `icon.svg` is the source. `icon.png` is the 512px listing the host mounts.
 
 `status` is `beta`. `unlisted` is true, so a host whose launcher honors that flag keeps the app off the catalog grid. The page is still [https://kindel.com/kld/apps/facet/](https://kindel.com/kld/apps/facet/). It is noindex, and it is not in the nav.
 
