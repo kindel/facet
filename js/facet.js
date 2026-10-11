@@ -68,6 +68,39 @@
   var root = document.getElementById("kld-editor");
   if (!root) return;
 
+  var lastCompany = "";
+
+  function companyKnown(id) {
+    for (var i = 0; i < S.companies.length; i++) {
+      if (S.companies[i].id === id) return true;
+    }
+    return false;
+  }
+
+  function trackCompany(id, source) {
+    if (!companyKnown(id) || typeof window.kldTrack !== "function") return;
+    window.kldTrack("kld_company", {
+      app: "facet",
+      company: id,
+      previous_company: lastCompany,
+      source: source
+    });
+    lastCompany = id;
+  }
+
+  function trackUrlCompanies(ids, before) {
+    // Own keys only. A plain object treats constructor as already seen.
+    var seen = Object.create(null);
+    (ids || []).forEach(function (id) {
+      if (!id || seen[id]) return;
+      seen[id] = true;
+      if (before && before.indexOf(id) !== -1) return;
+      trackCompany(id, "url");
+    });
+  }
+
+  if (typeof window.kldTrack === "function") window.kldTrack("app_view", { app: "facet" });
+
   function readFilters() {
     var u = new URL(window.location.href);
     function list(name) {
@@ -2408,11 +2441,13 @@
       var attr = kind === "companies" ? "data-company" : "data-principle";
       var id = event.target.getAttribute(attr);
       var list = S.filters[kind];
+      var turnedOn = event.target.checked && list.indexOf(id) === -1;
       if (event.target.checked) {
         if (list.indexOf(id) === -1) list.push(id);
       } else {
         S.filters[kind] = list.filter(function (value) { return value !== id; });
       }
+      if (kind === "companies" && turnedOn) trackCompany(id, "picker");
       writeFilters(false);
       paint();
       return;
@@ -2473,9 +2508,11 @@
   });
 
   window.addEventListener("popstate", function () {
+    var before = S.filters.companies.slice();
     S.filters = readFilters();
     S.pendingOpen = false;
     paint();
+    trackUrlCompanies(S.filters.companies, before);
   });
   window.addEventListener("resize", applyNarrow);
 
@@ -4461,6 +4498,9 @@
     renderShell();
     try {
       keep("principles", "data/index.json", await fetchText(RAW.principles + "data/index.json"));
+      var indexEarly = S.files["principles:data/index.json"].json;
+      S.companies = (indexEarly && indexEarly.companies) || [];
+      trackUrlCompanies(S.filters.companies);
       keep("principles", "data/facets.json", await fetchText(RAW.principles + "data/facets.json"));
       keep("biq", "data/questions.json", await fetchText(RAW.biq + "data/questions.json"));
       await loadMaps();

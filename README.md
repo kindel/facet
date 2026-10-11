@@ -69,7 +69,7 @@ node --check lib/rules.js
 node --check lib/guard.js
 node --check lib/reuse.js
 node --check lib/insert.js
-node --test tests/patch.test.mjs tests/allow.test.mjs tests/guard.test.mjs tests/reuse.test.mjs tests/lists.test.mjs tests/insert.test.mjs tests/essay-links.test.mjs
+node --test tests/patch.test.mjs tests/allow.test.mjs tests/guard.test.mjs tests/reuse.test.mjs tests/lists.test.mjs tests/insert.test.mjs tests/essay-links.test.mjs tests/analytics.test.mjs
 node scripts/check-essay-links.js
 ```
 
