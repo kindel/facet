@@ -2085,3 +2085,91 @@ test("a url-selected extra stays on the source", () => {
   assert.equal(result.changes.length, 1);
   assert.equal(result.changes[0].file, "data/teaching/generic/index.json");
 });
+
+function blogTitles(files, changes, file) {
+  const blog = JSON.parse(files["principles:" + file]).blog.slice();
+  changes.forEach((one) => {
+    if (one.file !== file || !one.op) return;
+    if (one.op === "remove") blog.splice(one.index, 1);
+    else if (one.op === "move") {
+      const moved = blog.splice(one.index, 1)[0];
+      const to = one.to > blog.length ? blog.length : one.to;
+      blog.splice(Math.max(0, to), 0, moved);
+    }
+  });
+  return blog.map((one) => one.title);
+}
+
+test("a later remove follows a generated further reading move", () => {
+  const first = { title: "A", url: "https://kindel.com/a", note: "A note." };
+  const second = { title: "B", url: "https://kindel.com/b", note: "B note." };
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: [first, second] }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: [first, second] }),
+  };
+  const result = reuse.expand([
+    {
+      op: "move",
+      repo: "principles",
+      file: "data/teaching/amazon/index.json",
+      path: ["blog"],
+      index: 0,
+      to: 1,
+      before: first,
+      company: "amazon",
+    },
+    {
+      op: "remove",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["blog"],
+      index: 1,
+      before: second,
+      company: "generic",
+    },
+  ], index, maps, files);
+  assert.equal(result.ok, true, result.error);
+  const genericRemoves = result.changes.filter((one) => one.op === "remove" && one.file.indexOf("/generic/") !== -1);
+  const amazonRemoves = result.changes.filter((one) => one.op === "remove" && one.file.indexOf("/amazon/") !== -1);
+  assert.equal(genericRemoves.length, 1);
+  assert.equal(genericRemoves[0].index, 0);
+  assert.equal(amazonRemoves.length, 1);
+  assert.equal(amazonRemoves[0].index, 0);
+  assert.deepEqual(blogTitles(files, result.changes, "data/teaching/amazon/index.json"), ["A"]);
+  assert.deepEqual(blogTitles(files, result.changes, "data/teaching/generic/index.json"), ["A"]);
+});
+
+test("a move collapses when an earlier removal deletes its destination", () => {
+  const first = { title: "A", url: "https://kindel.com/a", note: "A note." };
+  const second = { title: "B", url: "https://kindel.com/b", note: "B note." };
+  const third = { title: "C", url: "https://kindel.com/c", note: "C note." };
+  const files = {
+    "principles:data/teaching/amazon/index.json": JSON.stringify({ blog: [first, second] }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({ blog: [first, second, third] }),
+  };
+  const result = reuse.expand([
+    {
+      op: "remove",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["blog"],
+      index: 1,
+      before: second,
+      company: "generic",
+    },
+    {
+      op: "move",
+      repo: "principles",
+      file: "data/teaching/amazon/index.json",
+      path: ["blog"],
+      index: 0,
+      to: 1,
+      before: first,
+      company: "amazon",
+    },
+  ], index, maps, files);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.changes.filter((one) => one.op === "move").length, 0);
+  assert.deepEqual(blogTitles(files, result.changes, "data/teaching/amazon/index.json"), ["A"]);
+  assert.deepEqual(blogTitles(files, result.changes, "data/teaching/generic/index.json"), ["A", "C"]);
+});
