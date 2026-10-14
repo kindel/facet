@@ -735,7 +735,8 @@ test("two inserts of one teaching slug are rejected", () => {
   }
   const doubled = plan.prepare(files, [insertAt(0), insertAt(1)], slugs);
   assert.equal(doubled.ok, false);
-  assert.match(doubled.errors.map((item) => item.error).join("\n"), /lists ownership more than once/);
+  const doubledListed = doubled.errors.filter((item) => /lists ownership more than once/.test(item.error));
+  assert.equal(doubledListed.length, 1);
   const once = plan.prepare(files, [insertAt(0)], slugs);
   assert.equal(once.ok, true, once.ok ? "" : once.errors[0].error);
   const listed = JSON.stringify({ principles: [entry], blog: blog }, null, 2) + "\n";
@@ -1265,6 +1266,33 @@ test("a catalog id has to match the company principle", () => {
   }, [wrongInsert], slugs);
   assert.equal(unloaded.ok, false);
   assert.match(unloaded.errors[0].error, /principle list for this company is missing/);
+});
+
+test("two catalog inserts of one slug report one error", () => {
+  const entry = { id: 8002, slug: "ownership", file: "ownership.json" };
+  const blog = [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }];
+  const catalog = JSON.stringify({ principles: [entry, entry], blog: blog });
+  const record = teaching(8);
+  function insertAt(index) {
+    return {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["principles"],
+      index: index,
+      value: entry,
+      company: "generic",
+    };
+  }
+  const errors = guard.review({
+    "principles:data/teaching/generic/index.json": JSON.stringify({ principles: [], blog: blog }),
+    "principles:data/teaching/generic/ownership.json": record,
+  }, {
+    "principles:data/teaching/generic/index.json": catalog,
+    "principles:data/teaching/generic/ownership.json": record,
+  }, [insertAt(0), insertAt(1)]);
+  const listed = errors.filter((item) => /lists ownership more than once/.test(item));
+  assert.equal(listed.length, 1);
 });
 
 test("adding teaching lists the record, and a catalog entry needs the file", () => {
