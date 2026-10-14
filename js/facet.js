@@ -577,6 +577,10 @@
       });
       teachingFiles.forEach(function (file) {
         (clusterOf[file] || []).forEach(function (sibling) { add("principles:" + sibling); });
+        // The catalog is the before state for a new teaching file. Send it
+        // even when this save does not edit the row that already lists the slug.
+        var company = /^data\/teaching\/([a-z0-9-]+)\//.exec(file);
+        if (company) add("principles:data/teaching/" + company[1] + "/index.json");
       });
     }
     return files;
@@ -3722,22 +3726,28 @@
     var entry = { id: meta.id, slug: meta.slug, file: meta.slug + ".json" };
     if (S.files["principles:" + indexFile]) {
       var list = replayValues("principles", indexFile, ["principles"], originalArray("principles", indexFile, ["principles"]));
-      queueOp({
-        op: "insert",
-        repo: "principles",
-        file: indexFile,
-        path: ["principles"],
-        index: list.length,
-        value: entry,
-        label: draft.principleName,
-        field: "added",
-        listKind: "catalog",
-        batch: batch,
-        company: draft.companyId,
-        companyName: draft.companyName,
-        principleName: draft.principleName,
-        tags: tags,
-      });
+      var listed = false;
+      for (var n = 0; n < list.length; n++) {
+        if (list[n] && list[n].slug === meta.slug) listed = true;
+      }
+      if (!listed) {
+        queueOp({
+          op: "insert",
+          repo: "principles",
+          file: indexFile,
+          path: ["principles"],
+          index: list.length,
+          value: entry,
+          label: draft.principleName,
+          field: "added",
+          listKind: "catalog",
+          batch: batch,
+          company: draft.companyId,
+          companyName: draft.companyName,
+          principleName: draft.principleName,
+          tags: tags,
+        });
+      }
     } else {
       var blog = doc.blog[0];
       queueOp({

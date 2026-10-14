@@ -696,6 +696,57 @@ test("a new teaching catalog checks each entry and each new reading link", () =>
   assert.equal(ok.length, 0);
 });
 
+test("a set catalog may list no principles", () => {
+  const blog = [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }];
+  assert.equal(rules.structuralShape({
+    principles: [],
+    blog: blog,
+  }, "data/teaching/usmc/index.json", false).length, 0);
+  assert.equal(rules.structuralShape({
+    principles: [],
+    blog: blog,
+  }, "data/teaching/usmc/index.json", true).length, 0);
+  assert.match(rules.structuralShape({
+    blog: blog,
+  }, "data/teaching/usmc/index.json", false).join("\n"), /principles list/);
+});
+
+test("creating a missing teaching file keeps an existing catalog row", () => {
+  const indexText = genericIndexText();
+  const catalog = JSON.stringify({
+    principles: [{ id: 8002, slug: "ownership", file: "ownership.json" }],
+    blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+  });
+  const files = {
+    "principles:data/index.json": indexText,
+    "principles:data/teaching/generic/index.json": catalog,
+  };
+  const create = {
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/generic/ownership.json",
+    path: [],
+    value: JSON.parse(teaching(8)),
+    company: "generic",
+  };
+  const kept = plan.prepare(files, [create], slugs);
+  assert.equal(kept.ok, true, kept.ok ? "" : kept.errors[0].error);
+  assert.equal(kept.files.length, 1);
+  assert.equal(kept.files[0].file, "data/teaching/generic/ownership.json");
+  const insert = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 1,
+    value: { id: 8002, slug: "ownership", file: "ownership.json" },
+    company: "generic",
+  };
+  const doubled = plan.prepare(files, [create, insert], slugs);
+  assert.equal(doubled.ok, false);
+  assert.match(doubled.errors.map((item) => item.error).join("\n"), /already lists ownership|already has a teaching catalog entry/);
+});
+
 test("a new facet row has to be a complete calibration row", () => {
   const bad = rules.checkItem({
     id: "thin",
@@ -1450,7 +1501,7 @@ test("a support catalog does not stand in for the catalog change", () => {
     }],
   });
   const catalog = JSON.stringify({
-    principles: [{ id: 8002, slug: "ownership", file: "ownership.json" }],
+    principles: [{ id: 8003, slug: "earn-trust", file: "earn-trust.json" }],
     blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
   });
   const create = {
