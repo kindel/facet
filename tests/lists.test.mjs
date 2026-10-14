@@ -1982,3 +1982,15 @@ test("the page does not invent a derivation map when the listing fails", () => {
   assert.equal(source.includes("data/maps/_list.json"), false);
   assert.match(source, /The derivation map list could not be loaded, so a facet change cannot be saved/);
 });
+
+test("a reading-only teaching record keeps its Further reading checks without prose", () => {
+  const file = "data/teaching/toyota/kaizen.json";
+  const link = { title: "Toyota Way 2001", url: "https://www.toyota-global.com/a", note: "Kaizen, under Continuous Improvement." };
+  assert.deepEqual(rules.structuralShape({ id: 7002, slug: "kaizen", blog: [link] }, file, false), []);
+  assert.deepEqual(rules.structuralShape({ id: 7002, slug: "kaizen", blog: [] }, file, false), ["Further reading cannot be empty."]);
+  assert.ok(rules.structuralShape({ id: 7002, slug: "kaizen", blog: [{ title: "x", url: "http://a", note: "n" }] }, file, false).length);
+  assert.deepEqual(rules.structuralShape({ id: 7002, slug: "kaizen", blog: [link] }, file, true, { records: { kaizen: 7002 } }), []);
+  assert.ok(rules.structuralShape({ id: 7003, slug: "kaizen", blog: [link] }, file, true, { records: { kaizen: 7002 } }).length);
+  // A record with any prose field is still a full teaching record.
+  assert.ok(rules.structuralShape({ id: 7002, slug: "kaizen", why: ["One."], blog: [link] }, file, false).includes("Why must stay between 3 and 6 paragraphs."));
+});
