@@ -501,3 +501,154 @@ test("the first teaching file for a set catalog is still listed", async () => {
     "insert data/teaching/usmc/index.json",
   ]);
 });
+
+function teachingStub(id, slug) {
+  return {
+    id,
+    slug,
+    why: ["One paragraph.", "Another paragraph.", "See the related principle."],
+    calibrationIntro: "How to use the rows.",
+    examples: [{ title: "One case", body: "What happened." }],
+    deepen: ["One?", "Two?", "Three?", "Four?", "Five?", "Six?"],
+    related: [{ id: slug === "ownership" ? "deliver-results" : "ownership", note: "Read this alongside." }],
+    blog: [{ title: "A note", url: "https://example.com/a", note: "Why it belongs." }],
+  };
+}
+
+test("a mapped sibling catalog is included when both teaching files are missing", async () => {
+  const saved = [];
+  const blog = [{ title: "A note", url: "https://example.com/a", note: "Why it belongs." }];
+  const index = {
+    companies: [
+      {
+        id: "generic",
+        name: "Universal",
+        principles: [
+          { id: 8002, slug: "ownership", name: "Ownership", sort: 1, file: "data/generic/ownership.json" },
+          { id: 8003, slug: "deliver-results", name: "Deliver Results", sort: 2, file: "data/generic/deliver-results.json" },
+        ],
+      },
+      {
+        id: "amazon",
+        name: "Amazon",
+        principles: [
+          { id: 1002, slug: "ownership", name: "Ownership", sort: 1, file: "data/amazon/ownership.json" },
+        ],
+      },
+    ],
+  };
+  const page = boot("https://kindel.com/kld/apps/facet/?c=generic&type=teaching", async (url, opts) => {
+    const target = String(url);
+    if (target.indexOf("editor-save") !== -1) {
+      saved.push(opts && opts.body);
+      return { ok: false, status: 422, json: async () => ({ error: "stopped" }), text: async () => "" };
+    }
+    if (target.indexOf("api.github.com") !== -1 && target.indexOf("/data/maps") !== -1) {
+      return jsonResponse([{ type: "file", name: "generic-amazon.json", path: "data/maps/generic-amazon.json" }], 200);
+    }
+    if (target.endsWith("data/maps/generic-amazon.json")) {
+      return jsonResponse({
+        source: "generic",
+        target: "amazon",
+        pairs: [{ sourceSlug: "ownership", targetIds: [1002] }],
+      }, 200);
+    }
+    if (target.endsWith("data/index.json")) return jsonResponse(index, 200);
+    if (target.endsWith("data/facets.json")) return jsonResponse({ facets: [] }, 200);
+    if (target.endsWith("data/questions.json")) return jsonResponse({ companies: [] }, 200);
+    if (target.endsWith("data/generic/ownership.json") || target.endsWith("data/generic/deliver-results.json") || target.endsWith("data/amazon/ownership.json")) {
+      return jsonResponse({ id: 1, slug: "x", name: "X", rows: [] }, 200);
+    }
+    if (target.endsWith("data/teaching/generic/deliver-results.json")) {
+      return jsonResponse(teachingStub(8003, "deliver-results"), 200);
+    }
+    if (target.endsWith("data/teaching/generic/index.json")) {
+      return jsonResponse({
+        principles: [
+          { id: 8002, slug: "ownership", file: "ownership.json" },
+          { id: 8003, slug: "deliver-results", file: "deliver-results.json" },
+        ],
+        blog,
+      }, 200);
+    }
+    if (target.endsWith("data/teaching/amazon/index.json")) {
+      return jsonResponse({
+        principles: [{ id: 1002, slug: "ownership", file: "ownership.json" }],
+        blog,
+      }, 200);
+    }
+    return failResponse(404);
+  });
+  await settle();
+  const adds = buttons(page).filter((btn) => btn.textContent === "Add teaching");
+  assert.ok(adds.length >= 1, buttons(page).map((btn) => btn.textContent).join(" | "));
+  click(adds[0]);
+  const source = page.document.getElementById("ed-draft-source");
+  assert.ok(source, "source select did not open");
+  source.value = "deliver-results";
+  source.dispatchEvent({ type: "change", bubbles: true });
+  const draftAdd = page.document.getElementById("ed-draft-add");
+  assert.ok(draftAdd, "draft did not open");
+  click(draftAdd);
+  const save = page.document.getElementById("ed-save");
+  click(save);
+  await settle();
+  assert.equal(saved.length, 1, page.document.getElementById("ed-notice") && page.document.getElementById("ed-notice").textContent);
+  const body = JSON.parse(saved[0]);
+  assert.equal(typeof body.files["principles:data/teaching/generic/index.json"], "string");
+  assert.equal(typeof body.files["principles:data/teaching/amazon/index.json"], "string");
+});
+
+test("deleting the only teaching file leaves a set catalog", async () => {
+  const saved = [];
+  const blog = [{ title: "A note", url: "https://example.com/a", note: "Why it belongs." }];
+  const index = {
+    companies: [{
+      id: "amazon",
+      name: "Amazon",
+      principles: [{ id: 1002, slug: "ownership", name: "Ownership", sort: 1, file: "data/amazon/ownership.json" }],
+    }],
+  };
+  const page = boot("https://kindel.com/kld/apps/facet/?c=amazon&type=teaching", async (url, opts) => {
+    const target = String(url);
+    if (target.indexOf("editor-save") !== -1) {
+      saved.push(opts && opts.body);
+      return { ok: false, status: 422, json: async () => ({ error: "stopped" }), text: async () => "" };
+    }
+    if (target.endsWith("data/index.json")) return jsonResponse(index, 200);
+    if (target.endsWith("data/facets.json")) return jsonResponse({ facets: [] }, 200);
+    if (target.endsWith("data/questions.json")) return jsonResponse({ companies: [] }, 200);
+    if (target.endsWith("data/amazon/ownership.json")) {
+      return jsonResponse({ id: 1002, slug: "ownership", name: "Ownership", rows: [] }, 200);
+    }
+    if (target.endsWith("data/teaching/amazon/index.json")) {
+      return jsonResponse({
+        principles: [{ id: 1002, slug: "ownership", file: "ownership.json" }],
+        blog,
+      }, 200);
+    }
+    if (target.endsWith("data/teaching/amazon/ownership.json")) {
+      return jsonResponse(teachingStub(1002, "ownership"), 200);
+    }
+    return failResponse(404);
+  });
+  await settle();
+  const items = page.editor.querySelectorAll("[data-item]");
+  assert.ok(items.length, "no teaching items");
+  click(items[0]);
+  const del = buttons(page).filter((btn) => btn.textContent === "Delete teaching")[0];
+  assert.ok(del, buttons(page).map((btn) => btn.textContent).join(" | "));
+  click(del);
+  const notice = page.document.getElementById("ed-notice");
+  assert.ok(!notice || notice.textContent.indexOf("cannot be empty") === -1, notice && notice.textContent);
+  const save = page.document.getElementById("ed-save");
+  click(save);
+  await settle();
+  assert.equal(saved.length, 1, notice && notice.textContent);
+  const body = JSON.parse(saved[0]);
+  const ops = body.changes.map((change) => change.op + " " + change.file).sort();
+  assert.deepEqual(ops, [
+    "delete data/teaching/amazon/ownership.json",
+    "remove data/teaching/amazon/index.json",
+  ]);
+});
