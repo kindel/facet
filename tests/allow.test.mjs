@@ -246,6 +246,35 @@ test("inherited names are not company ids", () => {
   }).ok, true);
 });
 
+test("a teaching file stays while its principle is listed", () => {
+  const file = "data/teaching/generic/invent-and-simplify.json";
+  const listed = JSON.stringify({
+    companies: [{ id: "generic", principles: [{ id: 8006, slug: "invent-and-simplify" }] }],
+  });
+  const gone = JSON.stringify({
+    companies: [{ id: "generic", principles: [{ id: 8001, slug: "ownership" }] }],
+  });
+  assert.match(allow.teachingDeleteError(file, listed), /leaves the principle without a teaching file/);
+  assert.equal(allow.teachingDeleteError(file, gone), "");
+  assert.match(allow.teachingDeleteError(file, ""), /principle index is not loaded/);
+  assert.match(allow.teachingDeleteError(file, "{"), /principle index is not loaded/);
+  assert.equal(allow.teachingDeleteError("data/teaching/generic/index.json", listed), "");
+  assert.equal(allow.assess({
+    op: "delete",
+    repo: "principles",
+    file: file,
+    path: [],
+  }).ok, true);
+  assert.equal(allow.assess({
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/arm/own-it.json",
+    path: ["blog"],
+    index: 0,
+    value: { title: "Arm", url: "https://www.arm.com/company", note: "The company page." },
+  }).ok, true);
+});
+
 test("generated facet rows are required, and source refs are not editable prose", () => {
   const text = `{
   "facets": [

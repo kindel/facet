@@ -504,8 +504,7 @@ test("the first teaching file for a set catalog is still listed", async () => {
   ]);
 });
 
-test("deleting the last teaching file leaves an empty catalog", async () => {
-  const saved = [];
+test("a listed principle does not offer teaching deletion", async () => {
   const index = {
     companies: [{
       id: "usmc",
@@ -528,7 +527,53 @@ test("deleting the last teaching file leaves an empty catalog", async () => {
     slug: "set-the-example",
     why: ["Marines copy what you do."],
   };
-  const page = boot("https://kindel.com/kld/apps/facet/?c=usmc&type=teaching", async (url, opts) => {
+  const page = boot("https://kindel.com/kld/apps/facet/?c=usmc&type=teaching", async (url) => {
+    const target = String(url);
+    if (target.endsWith("data/index.json")) return jsonResponse(index, 200);
+    if (target.endsWith("data/facets.json")) return jsonResponse({ facets: [] }, 200);
+    if (target.endsWith("data/questions.json")) return jsonResponse({ companies: [] }, 200);
+    if (target.endsWith("data/usmc/set-the-example.json")) {
+      return jsonResponse({ id: 10005, slug: "set-the-example", name: "Set the example", rows: [] }, 200);
+    }
+    if (target.endsWith("data/teaching/usmc/index.json")) return jsonResponse(catalog, 200);
+    if (target.endsWith("data/teaching/usmc/set-the-example.json")) return jsonResponse(teachingFile, 200);
+    return failResponse(404);
+  });
+  await settle();
+  const status = page.document.getElementById("ed-status");
+  const statusText = status ? status.textContent : "";
+  assert.ok(!/Could not load/.test(statusText), statusText);
+  const rows = buttons(page).filter((btn) => (btn.getAttribute("data-item") || "").indexOf("teach:usmc:") === 0);
+  assert.ok(rows.length > 0, buttons(page).map((btn) => btn.textContent).join(" | "));
+  click(rows[0]);
+  const del = buttons(page).filter((btn) => btn.getAttribute("data-act") === "delete-teaching");
+  assert.equal(del.length, 0, buttons(page).map((btn) => btn.getAttribute("data-act") || btn.textContent).join(" | "));
+  const moves = buttons(page).filter((btn) => {
+    const act = btn.getAttribute("data-act");
+    return act === "teaching-up" || act === "teaching-down";
+  });
+  assert.equal(moves.length, 2);
+});
+
+test("deleting an unlisted teaching file leaves an empty catalog", async () => {
+  const saved = [];
+  const index = {
+    companies: [{
+      id: "usmc",
+      name: "U.S. Marine Corps",
+      principles: [],
+    }],
+  };
+  const catalog = {
+    principles: [{ id: 10005, slug: "set-the-example", file: "set-the-example.json" }],
+    blog: [{ title: "Leadership Traits", url: "https://example.com/traits", note: "Character." }],
+  };
+  const teachingFile = {
+    id: 10005,
+    slug: "set-the-example",
+    why: ["Marines copy what you do."],
+  };
+  const page = boot("https://kindel.com/kld/apps/facet/?type=teaching", async (url, opts) => {
     const target = String(url);
     if (target.indexOf("editor-save") !== -1) {
       saved.push(opts && opts.body);
