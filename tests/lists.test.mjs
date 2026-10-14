@@ -326,8 +326,21 @@ test("removing a teaching record also has to clear its catalog entry", () => {
     file: record,
     path: [],
   };
-  assert.match(guard.review(before, before, [removal]).join("\n"), /needs its teaching catalog/);
-  assert.match(guard.review({}, {}, [removal]).join("\n"), /needs its teaching catalog/);
+  const listedIndex = {
+    "principles:data/index.json": JSON.stringify({
+      companies: [{ id: "generic", principles: [{ id: 8006, slug: "invent-and-simplify" }] }],
+    }),
+  };
+  const goneIndex = {
+    "principles:data/index.json": JSON.stringify({
+      companies: [{ id: "generic", principles: [{ id: 8001, slug: "ownership" }] }],
+    }),
+  };
+  assert.match(guard.review(before, before, [removal]).join("\n"), /principle index is not loaded/);
+  assert.match(guard.review({}, {}, [removal]).join("\n"), /principle index is not loaded/);
+  const listed = Object.assign({}, before, listedIndex);
+  assert.match(guard.review(listed, listed, [removal]).join("\n"), /leaves the principle without a teaching file/);
+  const gone = Object.assign({}, before, goneIndex);
   const catalogTouch = {
     op: "replace",
     repo: "principles",
@@ -336,25 +349,35 @@ test("removing a teaching record also has to clear its catalog entry", () => {
     before: "Teaching",
     after: "Teaching.",
   };
-  assert.match(guard.review(before, before, [removal, catalogTouch]).join("\n"), /still leaves it in the teaching catalog/);
-  const cleared = guard.review(before, Object.assign({}, before, {
-    "principles:data/teaching/generic/index.json": JSON.stringify({ principles: [{ id: 8001, slug: "ownership", file: "ownership.json" }] }),
-  }), [removal, {
+  assert.match(guard.review(gone, gone, [removal]).join("\n"), /needs its teaching catalog/);
+  assert.match(guard.review(gone, gone, [removal, catalogTouch]).join("\n"), /still leaves it in the teaching catalog/);
+  const clearEntry = {
     op: "remove",
     repo: "principles",
     file: "data/teaching/generic/index.json",
     path: ["principles"],
     index: 0,
     before: { id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" },
-  }]);
+  };
+  const clearedCatalog = JSON.stringify({ principles: [{ id: 8001, slug: "ownership", file: "ownership.json" }] });
+  const cleared = guard.review(gone, Object.assign({}, gone, {
+    "principles:data/teaching/generic/index.json": clearedCatalog,
+  }), [removal, clearEntry]);
   assert.equal(cleared.length, 0);
-  const dropped = guard.review(before, {}, [removal, {
+  const stillThere = guard.review(listed, Object.assign({}, listed, {
+    "principles:data/teaching/generic/index.json": JSON.stringify({ principles: [] }),
+  }), [removal, clearEntry]);
+  assert.match(stillThere.join("\n"), /leaves the principle without a teaching file/);
+  const dropCatalog = {
     op: "delete",
     repo: "principles",
     file: "data/teaching/generic/index.json",
     path: [],
-  }]);
+  };
+  const dropped = guard.review(gone, Object.assign({}, goneIndex), [removal, dropCatalog]);
   assert.equal(dropped.length, 0);
+  const droppedLive = guard.review(listed, Object.assign({}, listedIndex), [removal, dropCatalog]);
+  assert.match(droppedLive.join("\n"), /leaves the principle without a teaching file/);
 });
 
 test("a dry run keeps the removed lines of a deleted teaching file", () => {
@@ -371,7 +394,6 @@ test("a dry run keeps the removed lines of a deleted teaching file", () => {
     companies: [{
       id: "generic",
       principles: [
-        { id: 8006, slug: "invent-and-simplify" },
         { id: 8001, slug: "ownership" },
       ],
     }],
@@ -410,6 +432,37 @@ test("a dry run keeps the removed lines of a deleted teaching file", () => {
   assert.match(deleted.patch, /^\+\+\+ \/dev\/null$/m);
   assert.match(deleted.patch, /^@@ -1,1 \+0,0 @@$/m);
   assert.equal(deleted.patch.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++")).length, 0);
+  const liveIndex = JSON.stringify({
+    companies: [{
+      id: "generic",
+      principles: [
+        { id: 8006, slug: "invent-and-simplify" },
+        { id: 8001, slug: "ownership" },
+      ],
+    }],
+  });
+  const blocked = plan.prepare({
+    "principles:data/index.json": liveIndex,
+    ["principles:" + catalog]: catalogText,
+    ["principles:" + record]: recordText,
+  }, [
+    {
+      op: "remove",
+      repo: "principles",
+      file: catalog,
+      path: ["principles"],
+      index: 0,
+      before: removed,
+    },
+    {
+      op: "delete",
+      repo: "principles",
+      file: record,
+      path: [],
+    },
+  ], { generic: ["invent-and-simplify", "ownership"] });
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.errors.map((item) => item.error).join("\n"), /leaves the principle without a teaching file/);
 });
 
 test("a shared BIQ list cannot grow on the company that only displays it", () => {
@@ -747,15 +800,11 @@ test("two inserts of one teaching slug are rejected", () => {
   assert.match(again.errors.map((item) => item.error).join("\n"), /lists ownership more than once/);
 });
 
-test("deleting the last teaching file leaves an empty catalog", () => {
+test("deleting the last teaching file leaves an empty catalog only when the principle is gone", () => {
   const entry = { id: 8002, slug: "ownership", file: "ownership.json" };
   const blog = [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }];
   const catalog = JSON.stringify({ principles: [entry], blog: blog }, null, 2) + "\n";
-  const prepared = plan.prepare({
-    "principles:data/index.json": genericIndexText(),
-    "principles:data/teaching/generic/index.json": catalog,
-    "principles:data/teaching/generic/ownership.json": teaching(8),
-  }, [
+  const changes = [
     {
       op: "delete",
       repo: "principles",
@@ -772,7 +821,21 @@ test("deleting the last teaching file leaves an empty catalog", () => {
       before: entry,
       company: "generic",
     },
-  ], slugs);
+  ];
+  const refused = plan.prepare({
+    "principles:data/index.json": genericIndexText(),
+    "principles:data/teaching/generic/index.json": catalog,
+    "principles:data/teaching/generic/ownership.json": teaching(8),
+  }, changes, slugs);
+  assert.equal(refused.ok, false);
+  assert.match(refused.errors.map((item) => item.error).join("\n"), /leaves the principle without a teaching file/);
+  const prepared = plan.prepare({
+    "principles:data/index.json": JSON.stringify({
+      companies: [{ id: "generic", principles: [{ id: 8003, slug: "earn-trust" }] }],
+    }),
+    "principles:data/teaching/generic/index.json": catalog,
+    "principles:data/teaching/generic/ownership.json": teaching(8),
+  }, changes, slugs);
   assert.equal(prepared.ok, true, JSON.stringify(prepared.errors));
   const after = prepared.files.filter((file) => file.file.endsWith("index.json"))[0];
   assert.deepEqual(JSON.parse(after.after).principles, []);
@@ -1627,7 +1690,25 @@ test("a support catalog does not stand in for the catalog change", () => {
     company: "generic",
   }], { generic: ["invent-and-simplify"] });
   assert.equal(removed.ok, false);
-  assert.match(removed.errors[0].error, /needs its teaching catalog/);
+  assert.match(removed.errors[0].error, /principle index is not loaded/);
+  const removedKnown = plan.prepare({
+    "principles:data/index.json": JSON.stringify({
+      companies: [{ id: "generic", principles: [{ id: 8001, slug: "ownership" }] }],
+    }),
+    "principles:data/teaching/generic/index.json": JSON.stringify({
+      principles: [{ id: 8006, slug: "invent-and-simplify", file: "invent-and-simplify.json" }],
+      blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+    }),
+    ["principles:" + record]: "{}\n",
+  }, [{
+    op: "delete",
+    repo: "principles",
+    file: record,
+    path: [],
+    company: "generic",
+  }], { generic: ["ownership"] });
+  assert.equal(removedKnown.ok, false);
+  assert.match(removedKnown.errors[0].error, /needs its teaching catalog/);
 });
 
 test("calibration words stay inside quoted, authored, and generated", () => {
@@ -2090,4 +2171,35 @@ test("a reading link edit on a reading-only teaching record saves", () => {
   });
   assert.equal(token.ok, false);
   assert.match(token.errors[0].error, /\{lp:own-it\} is missing from related/);
+
+  const catalog = JSON.stringify({
+    principles: [{ id: 2008, slug: "own-it", file: "own-it.json" }],
+    blog: [{ title: "Arm Company", url: "https://www.arm.com/company", note: "The company page." }],
+  }, null, 2) + "\n";
+  const removedReading = plan.prepare({
+    "principles:data/index.json": JSON.stringify({
+      companies: [{ id: "arm", principles: [{ id: 2008, slug: "own-it" }] }],
+    }),
+    "principles:data/teaching/arm/index.json": catalog,
+    "principles:data/teaching/arm/own-it.json": JSON.stringify(record, null, 2) + "\n",
+  }, [
+    {
+      op: "delete",
+      repo: "principles",
+      file: "data/teaching/arm/own-it.json",
+      path: [],
+      company: "arm",
+    },
+    {
+      op: "remove",
+      repo: "principles",
+      file: "data/teaching/arm/index.json",
+      path: ["principles"],
+      index: 0,
+      before: { id: 2008, slug: "own-it", file: "own-it.json" },
+      company: "arm",
+    },
+  ], { arm: ["own-it"] });
+  assert.equal(removedReading.ok, false);
+  assert.match(removedReading.errors.map((item) => item.error).join("\n"), /leaves the principle without a teaching file/);
 });

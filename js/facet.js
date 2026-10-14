@@ -3780,12 +3780,28 @@
     return "";
   }
 
+  function teachingPrincipleListed(file) {
+    var match = /^data\/teaching\/([a-z0-9-]+)\/([a-z0-9-]+)\.json$/.exec(file || "");
+    if (!match || match[2] === "index") return false;
+    var co = S.companies.filter(function (entry) { return entry.id === match[1]; })[0];
+    if (!co) return false;
+    var principles = co.principles || [];
+    for (var i = 0; i < principles.length; i++) {
+      if (principles[i] && principles[i].slug === match[2]) return true;
+    }
+    return false;
+  }
+
   function deleteTeachingFile(item) {
     if (!item || item.repo !== "principles") return;
     var match = /^data\/teaching\/([a-z0-9-]+)\/([a-z0-9-]+)\.json$/.exec(item.file || "");
     if (!match || match[2] === "index") return;
     var companyId = match[1];
     var slug = match[2];
+    if (teachingPrincipleListed(item.file)) {
+      S.notice = "Removing " + slug + " leaves the principle without a teaching file.";
+      return;
+    }
     var indexFile = "data/teaching/" + companyId + "/index.json";
     var batch = "teach:" + nextSeq();
     var meta = null;
@@ -4339,7 +4355,9 @@
     if ((item.kind === "teaching" || item.kind === "concrete" || item.kind === "reading") && item.file.indexOf("/index.json") === -1 && item.file.indexOf("data/teaching/") === 0) {
       actions.appendChild(el("button", { type: "button", "data-act": "teaching-up" }, "Move teaching up"));
       actions.appendChild(el("button", { type: "button", "data-act": "teaching-down" }, "Move teaching down"));
-      actions.appendChild(el("button", { type: "button", "data-act": "delete-teaching" }, "Delete teaching"));
+      if (!teachingPrincipleListed(item.file)) {
+        actions.appendChild(el("button", { type: "button", "data-act": "delete-teaching" }, "Delete teaching"));
+      }
     }
     return actions.childNodes.length ? actions : null;
   }
