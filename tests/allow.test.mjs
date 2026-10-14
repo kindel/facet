@@ -122,6 +122,7 @@ test("generic calibration rows cannot change in count", () => {
   assert.equal(allow.assess(Object.assign({}, insert, { file: "data/amazon/ownership.json" })).ok, true);
   assert.equal(allow.assess(Object.assign({}, insert, { file: "data/dawn/ownership.json" })).ok, true);
   assert.equal(allow.assess(Object.assign({}, insert, { file: "data/blue-origin/ownership.json" })).ok, true);
+  assert.equal(allow.assess(Object.assign({}, insert, { file: "data/usmc/set-the-example.json" })).ok, true);
 });
 
 test("a published company missing from the allowlist is reported", () => {
@@ -135,6 +136,7 @@ test("a published company missing from the allowlist is reported", () => {
     "dawn",
     "toyota",
     "blue-origin",
+    "usmc",
   ];
   assert.deepEqual(allow.missingCompanies(published), []);
   assert.deepEqual(allow.missingCompanies(published.concat("blue-origin")), []);
@@ -170,6 +172,38 @@ test("blue origin records, teaching, and questions can be saved", () => {
     repo: "biq",
     file: "data/questions.json",
     path: ["companies", { id: "blue-origin" }, "principles", { id: 1001 }, "questions"],
+    index: 0,
+    value: { text: "Who?" },
+  }).ok, true);
+});
+
+test("usmc records, teaching, and questions can be saved", () => {
+  assert.equal(allow.assess({
+    repo: "principles",
+    file: "data/usmc/set-the-example.json",
+    path: ["rows", { id: "the-standard-you-keep" }, "under"],
+    before: "Does less.",
+    after: "Does a bit less.",
+  }).ok, true);
+  assert.equal(allow.assess({
+    repo: "principles",
+    file: "data/teaching/usmc/set-the-example.json",
+    path: ["why", 0],
+    before: "Because.",
+    after: "Because it matters.",
+  }).ok, true);
+  assert.equal(allow.assess({
+    repo: "biq",
+    file: "data/questions.json",
+    path: ["companies", { id: "usmc" }, "principles", { id: 10005 }, "questions", { id: "abcd1234" }, "text"],
+    before: "Who?",
+    after: "Who decides?",
+  }).ok, true);
+  assert.equal(allow.assess({
+    op: "insert",
+    repo: "biq",
+    file: "data/questions.json",
+    path: ["companies", { id: "usmc" }, "principles", { id: 10005 }, "questions"],
     index: 0,
     value: { text: "Who?" },
   }).ok, true);
