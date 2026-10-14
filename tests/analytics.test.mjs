@@ -346,3 +346,43 @@ test("popstate sends a newly added company once", async () => {
     { app: "facet", company: "blue-origin", previous_company: "amazon", source: "url" },
   ]);
 });
+
+test("a catalog-only teaching set does not fail load", async () => {
+  // USMC has a set catalog and no per-principle teaching files. load()
+  // used to 404 those files and never become ready.
+  const index = {
+    companies: [{
+      id: "usmc",
+      name: "U.S. Marine Corps",
+      principles: [{
+        id: 10005,
+        slug: "set-the-example",
+        name: "Set the example",
+        file: "data/usmc/set-the-example.json",
+      }],
+    }],
+  };
+  const catalog = {
+    principles: [{
+      id: 10005,
+      slug: "set-the-example",
+      file: "set-the-example.json",
+    }],
+    blog: [{ title: "Leadership Traits", url: "https://example.com/", note: "Character." }],
+  };
+  const page = boot("https://kindel.com/kld/apps/facet/?c=usmc", async (url) => {
+    const target = String(url);
+    if (target.endsWith("data/index.json")) return jsonResponse(index, 200);
+    if (target.endsWith("data/facets.json")) return jsonResponse({ facets: [] }, 200);
+    if (target.endsWith("data/questions.json")) return jsonResponse({ companies: [] }, 200);
+    if (target.endsWith("data/usmc/set-the-example.json")) {
+      return jsonResponse({ id: 10005, slug: "set-the-example", name: "Set the example", rows: [] }, 200);
+    }
+    if (target.endsWith("data/teaching/usmc/index.json")) return jsonResponse(catalog, 200);
+    return failResponse(404);
+  });
+  await settle();
+  const status = page.document.getElementById("ed-status");
+  const text = status ? status.textContent : "";
+  assert.ok(!/Could not load the content from GitHub/.test(text), text);
+});

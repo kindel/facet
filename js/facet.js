@@ -4531,7 +4531,11 @@
         (catalog.principles || []).forEach(function (entry) {
           var file = "data/teaching/" + company + "/" + (entry.file || entry.slug + ".json");
           more.push(async function () {
-            keep("principles", file, await fetchText(RAW.principles + file));
+            try {
+              keep("principles", file, await fetchText(RAW.principles + file));
+            } catch (err) {
+              if (err.status !== 404) throw err;
+            }
           });
         });
       });
