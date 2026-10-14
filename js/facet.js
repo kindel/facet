@@ -576,18 +576,11 @@
         groups[root].forEach(function (file) { clusterOf[file] = groups[root]; });
       });
       teachingFiles.forEach(function (file) {
-        var cluster = clusterOf[file] || [];
-        cluster.forEach(function (sibling) { add("principles:" + sibling); });
+        (clusterOf[file] || []).forEach(function (sibling) { add("principles:" + sibling); });
         // The catalog is the before state for a new teaching file. Send it
         // even when this save does not edit the row that already lists the slug.
-        // A mapped sibling that is also missing needs its own catalog, or
-        // reuse.expand() creates that file and guard.review() has no before state.
-        function addCatalog(path) {
-          var company = /^data\/teaching\/([a-z0-9-]+)\//.exec(path);
-          if (company) add("principles:data/teaching/" + company[1] + "/index.json");
-        }
-        addCatalog(file);
-        cluster.forEach(addCatalog);
+        var company = /^data\/teaching\/([a-z0-9-]+)\//.exec(file);
+        if (company) add("principles:data/teaching/" + company[1] + "/index.json");
       });
     }
     return files;
@@ -3817,6 +3810,13 @@
       var index = -1;
       for (var i = 0; i < list.length; i++) if (list[i] && list[i].slug === slug) index = i;
       if (index !== -1) {
+        if (list.length <= 1) {
+          Object.keys(S.pending).forEach(function (key) {
+            if (S.pending[key].batch === batch) delete S.pending[key];
+          });
+          S.notice = "The teaching catalog cannot be empty.";
+          return;
+        }
         queueOp({
           op: "remove",
           repo: "principles",
