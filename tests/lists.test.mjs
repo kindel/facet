@@ -1982,3 +1982,112 @@ test("the page does not invent a derivation map when the listing fails", () => {
   assert.equal(source.includes("data/maps/_list.json"), false);
   assert.match(source, /The derivation map list could not be loaded, so a facet change cannot be saved/);
 });
+
+// principles 961aa456 data/teaching/arm/own-it.json. id, slug, and blog only.
+function armOwnIt() {
+  return {
+    id: 2008,
+    slug: "own-it",
+    blog: [
+      {
+        title: "Life at Arm",
+        url: "https://careers.arm.com/life-at-arm",
+        note: "The published wording of this principle, under the 10x Mindset.",
+      },
+      {
+        title: "Arm Company",
+        url: "https://www.arm.com/company",
+        note: "The mission and company context this principle is meant to serve.",
+      },
+    ],
+  };
+}
+
+function armFiles(record) {
+  const file = "data/teaching/arm/own-it.json";
+  return {
+    "principles:data/index.json": JSON.stringify({
+      companies: [{ id: "arm", principles: [{ id: 2008, slug: "own-it" }] }],
+    }),
+    ["principles:" + file]: JSON.stringify(record, null, 2) + "\n",
+  };
+}
+
+function armReadingEdit(record, change) {
+  return plan.prepare(armFiles(record), [Object.assign({
+    repo: "principles",
+    file: "data/teaching/arm/own-it.json",
+    path: ["blog"],
+    company: "arm",
+  }, change)], { arm: ["own-it"] });
+}
+
+test("a reading link edit on a reading-only teaching record saves", () => {
+  const record = armOwnIt();
+  const added = {
+    title: "Arm careers",
+    url: "https://careers.arm.com/",
+    note: "Where Arm publishes the 10x Mindset.",
+  };
+  const inserted = armReadingEdit(record, { op: "insert", index: 2, value: added });
+  assert.equal(inserted.ok, true, JSON.stringify(inserted.errors));
+  assert.equal(JSON.parse(inserted.files[0].after).blog.length, 3);
+  assert.equal(JSON.parse(inserted.files[0].after).blog[2].url, added.url);
+
+  const removed = armReadingEdit(record, { op: "remove", index: 0, before: record.blog[0] });
+  assert.equal(removed.ok, true, JSON.stringify(removed.errors));
+  assert.deepEqual(JSON.parse(removed.files[0].after).blog, [record.blog[1]]);
+
+  const moved = armReadingEdit(record, { op: "move", index: 0, to: 1, before: record.blog[0] });
+  assert.equal(moved.ok, true, JSON.stringify(moved.errors));
+  assert.deepEqual(JSON.parse(moved.files[0].after).blog.map((item) => item.title), ["Arm Company", "Life at Arm"]);
+
+  const blankNote = armReadingEdit(record, {
+    op: "insert",
+    index: 2,
+    value: { title: "Arm careers", url: "https://careers.arm.com/", note: " " },
+  });
+  assert.equal(blankNote.ok, false);
+  assert.match(blankNote.errors[0].error, /A reading link needs a note/);
+
+  const plainUrl = armReadingEdit(record, {
+    op: "insert",
+    index: 2,
+    value: { title: "Arm careers", url: "http://careers.arm.com/", note: "Where Arm publishes the 10x Mindset." },
+  });
+  assert.equal(plainUrl.ok, false);
+  assert.match(plainUrl.errors[0].error, /https URL/);
+
+  const one = armOwnIt();
+  one.blog = [record.blog[0]];
+  const emptied = armReadingEdit(one, { op: "remove", index: 0, before: record.blog[0] });
+  assert.equal(emptied.ok, false);
+  assert.match(emptied.errors[0].error, /Further reading cannot be empty/);
+
+  const insecure = armOwnIt();
+  insecure.blog = [
+    {
+      title: "Life at Arm",
+      url: "http://careers.arm.com/life-at-arm",
+      note: "The published wording of this principle, under the 10x Mindset.",
+    },
+    record.blog[1],
+  ];
+  const movedBad = armReadingEdit(insecure, { op: "move", index: 0, to: 1, before: insecure.blog[0] });
+  assert.equal(movedBad.ok, false);
+  assert.match(movedBad.errors[0].error, /https URL/);
+
+  const partial = armOwnIt();
+  partial.why = ["Only one paragraph."];
+  const stillProse = armReadingEdit(partial, { op: "insert", index: 2, value: added });
+  assert.equal(stillProse.ok, false);
+  assert.match(stillProse.errors[0].error, /Why must stay between 3 and 6 paragraphs/);
+
+  const token = armReadingEdit(record, {
+    op: "insert",
+    index: 2,
+    value: { title: "Arm careers", url: "https://careers.arm.com/", note: "See {lp:own-it}." },
+  });
+  assert.equal(token.ok, false);
+  assert.match(token.errors[0].error, /\{lp:own-it\} is missing from related/);
+});
