@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
 import { dirname, join } from "node:path";
@@ -7,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const source = readFileSync(join(root, "js/facet.js"), "utf8");
+const plan = createRequire(import.meta.url)(join(root, "lib/plan.js"));
 
 const INDEX = {
   companies: [
@@ -345,4 +347,229 @@ test("popstate sends a newly added company once", async () => {
   assert.deepEqual(companies(page.calls), [
     { app: "facet", company: "blue-origin", previous_company: "amazon", source: "url" },
   ]);
+});
+
+test("a catalog-only teaching set does not fail load", async () => {
+  // USMC has a set catalog and no per-principle teaching files. load()
+  // used to 404 those files and never become ready.
+  const index = {
+    companies: [{
+      id: "usmc",
+      name: "U.S. Marine Corps",
+      principles: [{
+        id: 10005,
+        slug: "set-the-example",
+        name: "Set the example",
+        file: "data/usmc/set-the-example.json",
+      }],
+    }],
+  };
+  const catalog = {
+    principles: [{
+      id: 10005,
+      slug: "set-the-example",
+      file: "set-the-example.json",
+    }],
+    blog: [{ title: "Leadership Traits", url: "https://example.com/", note: "Character." }],
+  };
+  const page = boot("https://kindel.com/kld/apps/facet/?c=usmc", async (url) => {
+    const target = String(url);
+    if (target.endsWith("data/index.json")) return jsonResponse(index, 200);
+    if (target.endsWith("data/facets.json")) return jsonResponse({ facets: [] }, 200);
+    if (target.endsWith("data/questions.json")) return jsonResponse({ companies: [] }, 200);
+    if (target.endsWith("data/usmc/set-the-example.json")) {
+      return jsonResponse({ id: 10005, slug: "set-the-example", name: "Set the example", rows: [] }, 200);
+    }
+    if (target.endsWith("data/teaching/usmc/index.json")) return jsonResponse(catalog, 200);
+    return failResponse(404);
+  });
+  await settle();
+  const status = page.document.getElementById("ed-status");
+  const text = status ? status.textContent : "";
+  assert.ok(!/Could not load the content from GitHub/.test(text), text);
+});
+
+function buttons(page) {
+  return page.editor.querySelectorAll("button");
+}
+
+function click(node) {
+  node.dispatchEvent({ type: "click", bubbles: true });
+}
+
+// A listed teaching file can 404 without blanking the editor. Creating it
+// must reuse the catalog row. An empty principles list is the set-level
+// catalog, and the first real file still has to be inserted.
+async function addFirstTeaching(catalogPrinciples) {
+  const saved = [];
+  const index = {
+    companies: [
+      {
+        id: "generic",
+        name: "Universal",
+        principles: [{
+          id: 8001,
+          slug: "ownership",
+          name: "Ownership",
+          sort: 1,
+          file: "data/generic/ownership.json",
+        }],
+      },
+      {
+        id: "usmc",
+        name: "U.S. Marine Corps",
+        principles: [{
+          id: 10005,
+          slug: "set-the-example",
+          name: "Set the example",
+          sort: 5,
+          file: "data/usmc/set-the-example.json",
+        }],
+      },
+    ],
+  };
+  const genericTeach = {
+    id: 8001,
+    slug: "ownership",
+    blog: [{ title: "A note", url: "https://example.com/a", note: "Why it belongs." }],
+  };
+  const page = boot("https://kindel.com/kld/apps/facet/?c=usmc&type=teaching", async (url, opts) => {
+    const target = String(url);
+    if (target.indexOf("editor-save") !== -1) {
+      saved.push(opts && opts.body);
+      return { ok: false, status: 422, json: async () => ({ error: "stopped" }), text: async () => "" };
+    }
+    if (target.endsWith("data/index.json")) return jsonResponse(index, 200);
+    if (target.endsWith("data/facets.json")) return jsonResponse({ facets: [] }, 200);
+    if (target.endsWith("data/questions.json")) return jsonResponse({ companies: [] }, 200);
+    if (target.endsWith("data/generic/ownership.json")) {
+      return jsonResponse({ id: 8001, slug: "ownership", name: "Ownership", rows: [] }, 200);
+    }
+    if (target.endsWith("data/usmc/set-the-example.json")) {
+      return jsonResponse({ id: 10005, slug: "set-the-example", name: "Set the example", rows: [] }, 200);
+    }
+    if (target.endsWith("data/teaching/generic/index.json")) {
+      return jsonResponse({
+        principles: [{ id: 8001, slug: "ownership", file: "ownership.json" }],
+        blog: genericTeach.blog,
+      }, 200);
+    }
+    if (target.endsWith("data/teaching/generic/ownership.json")) return jsonResponse(genericTeach, 200);
+    if (target.endsWith("data/teaching/usmc/index.json")) {
+      return jsonResponse({
+        principles: catalogPrinciples,
+        blog: [{ title: "Leadership Traits", url: "https://example.com/traits", note: "Character." }],
+      }, 200);
+    }
+    return failResponse(404);
+  });
+  await settle();
+  const status = page.document.getElementById("ed-status");
+  const statusText = status ? status.textContent : "";
+  assert.ok(!/Could not load/.test(statusText), statusText);
+  const adds = buttons(page).filter((btn) => btn.textContent === "Add teaching");
+  assert.equal(adds.length, 1, buttons(page).map((btn) => btn.textContent).join(" | "));
+  click(adds[0]);
+  const draftAdd = page.document.getElementById("ed-draft-add");
+  assert.ok(draftAdd, "draft did not open");
+  click(draftAdd);
+  const notice = page.document.getElementById("ed-notice");
+  const toggle = page.document.getElementById("ed-pending-toggle");
+  assert.ok(toggle, notice ? notice.textContent : "no pending toggle");
+  const save = page.document.getElementById("ed-save");
+  click(save);
+  await settle();
+  assert.equal(saved.length, 1, toggle.textContent + (notice ? " " + notice.textContent : ""));
+  const body = JSON.parse(saved[0]);
+  return { body, pending: toggle.textContent };
+}
+
+test("creating a listed teaching file does not add a second catalog row", async () => {
+  const { body } = await addFirstTeaching([
+    { id: 10005, slug: "set-the-example", file: "set-the-example.json" },
+  ]);
+  const ops = body.changes.map((change) => change.op + " " + change.file);
+  assert.deepEqual(ops, ["create data/teaching/usmc/set-the-example.json"]);
+  assert.equal(typeof body.files["principles:data/teaching/usmc/index.json"], "string");
+  const catalog = JSON.parse(body.files["principles:data/teaching/usmc/index.json"]);
+  assert.equal(catalog.principles.length, 1);
+});
+
+test("the first teaching file for a set catalog is still listed", async () => {
+  const { body } = await addFirstTeaching([]);
+  const ops = body.changes.map((change) => change.op + " " + change.file).sort();
+  assert.deepEqual(ops, [
+    "create data/teaching/usmc/set-the-example.json",
+    "insert data/teaching/usmc/index.json",
+  ]);
+});
+
+test("deleting the last teaching file leaves an empty catalog", async () => {
+  const saved = [];
+  const index = {
+    companies: [{
+      id: "usmc",
+      name: "U.S. Marine Corps",
+      principles: [{
+        id: 10005,
+        slug: "set-the-example",
+        name: "Set the example",
+        sort: 5,
+        file: "data/usmc/set-the-example.json",
+      }],
+    }],
+  };
+  const catalog = {
+    principles: [{ id: 10005, slug: "set-the-example", file: "set-the-example.json" }],
+    blog: [{ title: "Leadership Traits", url: "https://example.com/traits", note: "Character." }],
+  };
+  const teachingFile = {
+    id: 10005,
+    slug: "set-the-example",
+    why: ["Marines copy what you do."],
+  };
+  const page = boot("https://kindel.com/kld/apps/facet/?c=usmc&type=teaching", async (url, opts) => {
+    const target = String(url);
+    if (target.indexOf("editor-save") !== -1) {
+      saved.push(opts && opts.body);
+      return { ok: false, status: 422, json: async () => ({ error: "stopped" }), text: async () => "" };
+    }
+    if (target.endsWith("data/index.json")) return jsonResponse(index, 200);
+    if (target.endsWith("data/facets.json")) return jsonResponse({ facets: [] }, 200);
+    if (target.endsWith("data/questions.json")) return jsonResponse({ companies: [] }, 200);
+    if (target.endsWith("data/usmc/set-the-example.json")) {
+      return jsonResponse({ id: 10005, slug: "set-the-example", name: "Set the example", rows: [] }, 200);
+    }
+    if (target.endsWith("data/teaching/usmc/index.json")) return jsonResponse(catalog, 200);
+    if (target.endsWith("data/teaching/usmc/set-the-example.json")) return jsonResponse(teachingFile, 200);
+    return failResponse(404);
+  });
+  await settle();
+  const status = page.document.getElementById("ed-status");
+  const statusText = status ? status.textContent : "";
+  assert.ok(!/Could not load/.test(statusText), statusText);
+  const rows = buttons(page).filter((btn) => (btn.getAttribute("data-item") || "").indexOf("teach:usmc:") === 0);
+  assert.ok(rows.length > 0, buttons(page).map((btn) => btn.textContent).join(" | "));
+  click(rows[0]);
+  const del = buttons(page).filter((btn) => btn.getAttribute("data-act") === "delete-teaching");
+  assert.equal(del.length, 1, buttons(page).map((btn) => btn.getAttribute("data-act") || btn.textContent).join(" | "));
+  click(del[0]);
+  const notice = page.document.getElementById("ed-notice");
+  assert.ok(!notice || !/cannot be empty/.test(notice.textContent), notice ? notice.textContent : "");
+  const toggle = page.document.getElementById("ed-pending-toggle");
+  assert.ok(toggle, notice ? notice.textContent : "no pending toggle");
+  click(page.document.getElementById("ed-save"));
+  await settle();
+  assert.equal(saved.length, 1, toggle.textContent + (notice ? " " + notice.textContent : ""));
+  const body = JSON.parse(saved[0]);
+  const ops = body.changes.map((change) => change.op + " " + change.file).sort();
+  assert.deepEqual(ops, [
+    "delete data/teaching/usmc/set-the-example.json",
+    "remove data/teaching/usmc/index.json",
+  ]);
+  const prepared = plan.prepare(body.files, body.changes);
+  assert.equal(prepared.ok, true, prepared.ok ? "" : prepared.errors[0].error);
+  const after = prepared.files.filter((file) => file.file === "data/teaching/usmc/index.json")[0];
+  assert.ok(after, prepared.files.map((file) => file.file).join(" "));
+  assert.deepEqual(JSON.parse(after.after).principles, []);
 });

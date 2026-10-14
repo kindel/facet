@@ -696,6 +696,124 @@ test("a new teaching catalog checks each entry and each new reading link", () =>
   assert.equal(ok.length, 0);
 });
 
+test("a set catalog may list no principles", () => {
+  const blog = [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }];
+  assert.equal(rules.structuralShape({
+    principles: [],
+    blog: blog,
+  }, "data/teaching/usmc/index.json", false).length, 0);
+  assert.equal(rules.structuralShape({
+    principles: [],
+    blog: blog,
+  }, "data/teaching/usmc/index.json", true).length, 0);
+  assert.match(rules.structuralShape({
+    blog: blog,
+  }, "data/teaching/usmc/index.json", false).join("\n"), /principles list/);
+});
+
+test("two inserts of one teaching slug are rejected", () => {
+  const indexText = genericIndexText();
+  const blog = [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }];
+  const catalog = JSON.stringify({ principles: [], blog: blog }, null, 2) + "\n";
+  const record = teaching(8);
+  const files = {
+    "principles:data/index.json": indexText,
+    "principles:data/teaching/generic/index.json": catalog,
+    "principles:data/teaching/generic/ownership.json": record,
+  };
+  const entry = { id: 8002, slug: "ownership", file: "ownership.json" };
+  function insertAt(index) {
+    return {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["principles"],
+      index: index,
+      value: entry,
+      company: "generic",
+    };
+  }
+  const doubled = plan.prepare(files, [insertAt(0), insertAt(1)], slugs);
+  assert.equal(doubled.ok, false);
+  const doubledListed = doubled.errors.filter((item) => /lists ownership more than once/.test(item.error));
+  assert.equal(doubledListed.length, 1);
+  const once = plan.prepare(files, [insertAt(0)], slugs);
+  assert.equal(once.ok, true, once.ok ? "" : once.errors[0].error);
+  const listed = JSON.stringify({ principles: [entry], blog: blog }, null, 2) + "\n";
+  const again = plan.prepare(Object.assign({}, files, {
+    "principles:data/teaching/generic/index.json": listed,
+  }), [insertAt(1)], slugs);
+  assert.equal(again.ok, false);
+  assert.match(again.errors.map((item) => item.error).join("\n"), /lists ownership more than once/);
+});
+
+test("deleting the last teaching file leaves an empty catalog", () => {
+  const entry = { id: 8002, slug: "ownership", file: "ownership.json" };
+  const blog = [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }];
+  const catalog = JSON.stringify({ principles: [entry], blog: blog }, null, 2) + "\n";
+  const prepared = plan.prepare({
+    "principles:data/index.json": genericIndexText(),
+    "principles:data/teaching/generic/index.json": catalog,
+    "principles:data/teaching/generic/ownership.json": teaching(8),
+  }, [
+    {
+      op: "delete",
+      repo: "principles",
+      file: "data/teaching/generic/ownership.json",
+      path: [],
+      company: "generic",
+    },
+    {
+      op: "remove",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["principles"],
+      index: 0,
+      before: entry,
+      company: "generic",
+    },
+  ], slugs);
+  assert.equal(prepared.ok, true, JSON.stringify(prepared.errors));
+  const after = prepared.files.filter((file) => file.file.endsWith("index.json"))[0];
+  assert.deepEqual(JSON.parse(after.after).principles, []);
+});
+
+test("creating a missing teaching file keeps an existing catalog row", () => {
+  const indexText = genericIndexText();
+  const catalog = JSON.stringify({
+    principles: [{ id: 8002, slug: "ownership", file: "ownership.json" }],
+    blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
+  });
+  const files = {
+    "principles:data/index.json": indexText,
+    "principles:data/teaching/generic/index.json": catalog,
+  };
+  const create = {
+    op: "create",
+    repo: "principles",
+    file: "data/teaching/generic/ownership.json",
+    path: [],
+    value: JSON.parse(teaching(8)),
+    company: "generic",
+  };
+  const kept = plan.prepare(files, [create], slugs);
+  assert.equal(kept.ok, true, kept.ok ? "" : kept.errors[0].error);
+  assert.equal(kept.files.length, 1);
+  assert.equal(kept.files[0].file, "data/teaching/generic/ownership.json");
+  const insert = {
+    op: "insert",
+    repo: "principles",
+    file: "data/teaching/generic/index.json",
+    path: ["principles"],
+    index: 1,
+    value: { id: 8002, slug: "ownership", file: "ownership.json" },
+    company: "generic",
+  };
+  const doubled = plan.prepare(files, [create, insert], slugs);
+  assert.equal(doubled.ok, false);
+  assert.match(doubled.errors.map((item) => item.error).join("\n"), /already lists ownership|already has a teaching catalog entry/);
+});
+
 test("a new facet row has to be a complete calibration row", () => {
   const bad = rules.checkItem({
     id: "thin",
@@ -1150,6 +1268,33 @@ test("a catalog id has to match the company principle", () => {
   assert.match(unloaded.errors[0].error, /principle list for this company is missing/);
 });
 
+test("two catalog inserts of one slug report one error", () => {
+  const entry = { id: 8002, slug: "ownership", file: "ownership.json" };
+  const blog = [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }];
+  const catalog = JSON.stringify({ principles: [entry, entry], blog: blog });
+  const record = teaching(8);
+  function insertAt(index) {
+    return {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["principles"],
+      index: index,
+      value: entry,
+      company: "generic",
+    };
+  }
+  const errors = guard.review({
+    "principles:data/teaching/generic/index.json": JSON.stringify({ principles: [], blog: blog }),
+    "principles:data/teaching/generic/ownership.json": record,
+  }, {
+    "principles:data/teaching/generic/index.json": catalog,
+    "principles:data/teaching/generic/ownership.json": record,
+  }, [insertAt(0), insertAt(1)]);
+  const listed = errors.filter((item) => /lists ownership more than once/.test(item));
+  assert.equal(listed.length, 1);
+});
+
 test("adding teaching lists the record, and a catalog entry needs the file", () => {
   const record = teaching(8);
   const missingCatalog = guard.review({}, {
@@ -1450,7 +1595,7 @@ test("a support catalog does not stand in for the catalog change", () => {
     }],
   });
   const catalog = JSON.stringify({
-    principles: [{ id: 8002, slug: "ownership", file: "ownership.json" }],
+    principles: [{ id: 8003, slug: "earn-trust", file: "earn-trust.json" }],
     blog: [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }],
   });
   const create = {
