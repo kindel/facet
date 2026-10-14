@@ -711,6 +711,72 @@ test("a set catalog may list no principles", () => {
   }, "data/teaching/usmc/index.json", false).join("\n"), /principles list/);
 });
 
+test("two inserts of one teaching slug are rejected", () => {
+  const indexText = genericIndexText();
+  const blog = [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }];
+  const catalog = JSON.stringify({ principles: [], blog: blog }, null, 2) + "\n";
+  const record = teaching(8);
+  const files = {
+    "principles:data/index.json": indexText,
+    "principles:data/teaching/generic/index.json": catalog,
+    "principles:data/teaching/generic/ownership.json": record,
+  };
+  const entry = { id: 8002, slug: "ownership", file: "ownership.json" };
+  function insertAt(index) {
+    return {
+      op: "insert",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["principles"],
+      index: index,
+      value: entry,
+      company: "generic",
+    };
+  }
+  const doubled = plan.prepare(files, [insertAt(0), insertAt(1)], slugs);
+  assert.equal(doubled.ok, false);
+  assert.match(doubled.errors.map((item) => item.error).join("\n"), /lists ownership more than once/);
+  const once = plan.prepare(files, [insertAt(0)], slugs);
+  assert.equal(once.ok, true, once.ok ? "" : once.errors[0].error);
+  const listed = JSON.stringify({ principles: [entry], blog: blog }, null, 2) + "\n";
+  const again = plan.prepare(Object.assign({}, files, {
+    "principles:data/teaching/generic/index.json": listed,
+  }), [insertAt(1)], slugs);
+  assert.equal(again.ok, false);
+  assert.match(again.errors.map((item) => item.error).join("\n"), /lists ownership more than once/);
+});
+
+test("deleting the last teaching file leaves an empty catalog", () => {
+  const entry = { id: 8002, slug: "ownership", file: "ownership.json" };
+  const blog = [{ title: "A note", url: "https://kindel.com/a", note: "Why it belongs." }];
+  const catalog = JSON.stringify({ principles: [entry], blog: blog }, null, 2) + "\n";
+  const prepared = plan.prepare({
+    "principles:data/index.json": genericIndexText(),
+    "principles:data/teaching/generic/index.json": catalog,
+    "principles:data/teaching/generic/ownership.json": teaching(8),
+  }, [
+    {
+      op: "delete",
+      repo: "principles",
+      file: "data/teaching/generic/ownership.json",
+      path: [],
+      company: "generic",
+    },
+    {
+      op: "remove",
+      repo: "principles",
+      file: "data/teaching/generic/index.json",
+      path: ["principles"],
+      index: 0,
+      before: entry,
+      company: "generic",
+    },
+  ], slugs);
+  assert.equal(prepared.ok, true, JSON.stringify(prepared.errors));
+  const after = prepared.files.filter((file) => file.file.endsWith("index.json"))[0];
+  assert.deepEqual(JSON.parse(after.after).principles, []);
+});
+
 test("creating a missing teaching file keeps an existing catalog row", () => {
   const indexText = genericIndexText();
   const catalog = JSON.stringify({

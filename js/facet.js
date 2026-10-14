@@ -3810,13 +3810,7 @@
       var index = -1;
       for (var i = 0; i < list.length; i++) if (list[i] && list[i].slug === slug) index = i;
       if (index !== -1) {
-        if (list.length <= 1) {
-          Object.keys(S.pending).forEach(function (key) {
-            if (S.pending[key].batch === batch) delete S.pending[key];
-          });
-          S.notice = "The teaching catalog cannot be empty.";
-          return;
-        }
+        // A catalog may list no principles. Further reading can stand alone.
         queueOp({
           op: "remove",
           repo: "principles",
